@@ -8,7 +8,7 @@
 - Windows 10/11 وPython 3.11+.
 - Chrome أو Edge مفتوح على Xbox Remote Play ومسجّل الدخول، والكونسول شغّال والتشغيل عن بُعد مفعّل. اجعل النافذة بحجم ثابت وغير مغطاة.
 - **ViGEmBus** (مشغّل اليد الوهمية) و**Tesseract OCR**.
-- مفتاح لمزوّد الرؤية: `GEMINI_API_KEY` أو `ANTHROPIC_API_KEY`.
+- مفتاح لمزوّد الرؤية: `DEEPSEEK_API_KEY` أو `GEMINI_API_KEY` أو `ANTHROPIC_API_KEY` (اختر مزوّدًا واحدًا بـ `XBOX_AGENT_VISION_PROVIDER`).
 - **حساب تجريبي** لا يهمّك إن تعثّرت عليه الجلسة. لا تبدأ بحسابك الأساسي.
 
 ## 1) التثبيت

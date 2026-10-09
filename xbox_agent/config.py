@@ -39,9 +39,13 @@ def load_env_file(path: str | Path | None = None) -> None:
 class Settings:
     dashboard_url: str = "http://127.0.0.1:8000"
     dashboard_token: str = ""
-    vision_provider: str = "auto"  # auto | gemini | claude
+    vision_provider: str = "auto"  # auto | gemini | deepseek | claude
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-flash"
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_thinking: str = "off"  # off = ask for non-thinking mode | default = leave it to the API
     claude_model: str = "claude-opus-5-5"
     claude_effort: str = "low"  # low | medium | high | xhigh | max
     claude_fallbacks: bool = True
@@ -88,6 +92,10 @@ class Settings:
             vision_provider=e("XBOX_AGENT_VISION_PROVIDER", cls.vision_provider),
             gemini_api_key=e("GEMINI_API_KEY", ""),
             gemini_model=e("XBOX_AGENT_GEMINI_MODEL", cls.gemini_model),
+            deepseek_api_key=e("DEEPSEEK_API_KEY", ""),
+            deepseek_model=e("XBOX_AGENT_DEEPSEEK_MODEL", cls.deepseek_model),
+            deepseek_base_url=e("XBOX_AGENT_DEEPSEEK_BASE_URL", cls.deepseek_base_url),
+            deepseek_thinking=e("XBOX_AGENT_DEEPSEEK_THINKING", cls.deepseek_thinking),
             claude_model=e("XBOX_AGENT_CLAUDE_MODEL", cls.claude_model),
             claude_effort=e("XBOX_AGENT_CLAUDE_EFFORT", cls.claude_effort),
             claude_fallbacks=e("XBOX_AGENT_CLAUDE_FALLBACKS", "1") != "0",

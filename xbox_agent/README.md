@@ -47,8 +47,9 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | `XBOX_AGENT_DASHBOARD_URL` | `http://127.0.0.1:8000` |
 | `XBOX_AGENT_DASHBOARD_TOKEN` | سرّ الوكيل مع الداشبورد (Bearer) |
 | `DASHBOARD_ADMIN_TOKEN` | سرّ المشرف للوحة الويب (يجب أن يختلف عن السابق) |
-| `XBOX_AGENT_VISION_PROVIDER` | `auto`؛ القيم: `auto` / `gemini` / `claude` (انظر «مزوّد الرؤية») |
-| `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | حسب المزوّد (Claude يقبل أيضًا `ant auth login`) |
+| `XBOX_AGENT_VISION_PROVIDER` | `auto`؛ القيم: `auto` / `gemini` / `deepseek` / `claude` (انظر «مزوّد الرؤية») |
+| `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` | حسب المزوّد (Claude يقبل أيضًا `ant auth login`) |
+| `XBOX_AGENT_DEEPSEEK_MODEL` / `_BASE_URL` / `_THINKING` | `deepseek-flash` / `https://api.deepseek.com` / `off` |
 | `XBOX_AGENT_CLAUDE_MODEL` / `_EFFORT` / `_FALLBACKS` | `claude-opus-5-5` / `low` / `1` |
 | `XBOX_AGENT_WINDOW_TITLE` | `Xbox` (جزء من عنوان نافذة المتصفح) |
 | `TESSERACT_CMD` | مسار `tesseract.exe` إن لم يكن في PATH |
@@ -69,9 +70,12 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | المزوّد | الملف | ملاحظات |
 |---|---|---|
 | `gemini` | `tools/gemini_vision.py` | `gemini-2.5-flash` في JSON mode |
+| `deepseek` | `tools/deepseek_vision.py` | `deepseek-flash` عبر `/chat/completions` بـ `httpx` مباشرة (بدون حزمة OpenAI) |
 | `claude` | `tools/claude_vision.py` | Anthropic SDK، مخرجات مقيّدة بالمخطط (`output_config.format`)، النموذج الافتراضي `claude-opus-5-5` |
 
-- `auto` (الافتراضي): Gemini إن وُجد `GEMINI_API_KEY`، وإلا Claude. عند وجود المفتاحين حدّد المزوّد صراحة.
+- `auto` (الافتراضي): أول مفتاح موجود بالترتيب: Gemini ثم DeepSeek وإلا Claude. عند وجود أكثر من مفتاح حدّد المزوّد صراحة.
+- **DeepSeek:** لا يقبل الصور إلا نموذج واحد قادر على الرؤية؛ الافتراضي `deepseek-flash` (ويُقبل `deepseek-v4-flash-vision-exp` إن كان حسابك ما زال يوجّه إليه). مع الصور يعمل وضع `json_object` فقط، لذلك يُرسَل مخطط JSON داخل الطلب ويتحقق الوكيل من الإجابة بنفسه. وضع التفكير قد يكون مفعّلًا افتراضيًا ويستهلك حد الرموز قبل أي نص، فيطلب الوكيل إيقافه (`_THINKING=off`) ويتراجع تلقائيًا إن رفض الخادم الحقل. هذه التفاصيل من وثائق وتقارير عامة (موقع الوثائق الرسمي محجوب من بيئتي)، ولم أستدعِ الـ API فعليًا، فأول `--check` عندك هو الاختبار الحقيقي.
+- **خصوصية:** اللقطات تُرسل كاملة لمزوّد الرؤية، وشاشة Redeem قد تُظهر الكود كاملًا وشاشات الدخول تُظهر بيانات الحساب. هذا ينطبق على كل المزوّدين؛ تأكد أن سياسة بيانات المزوّد الذي تختاره مقبولة لك.
 - مع Claude: الجهد `low` افتراضيًا لأن كل استدعاء قراءة بسيطة لشاشة واحدة والوكيل يكرّرها كثيرًا. لتوفير الكلفة غيّر
   `XBOX_AGENT_CLAUDE_MODEL` (مثلًا `claude-haiku-5-5`)، وارفع `XBOX_AGENT_CLAUDE_EFFORT` إن كانت القراءة غير دقيقة.
 - مع Claude يُفعَّل الـ fallback من جهة الخادم (`server-side-fallback-2026-07-01`): لو رفض مصنّف الأمان طلبًا يُعاد تشغيله

@@ -1,24 +1,12 @@
 """Claude as the vision backend (Anthropic SDK, JSON Schema constrained output)."""
 from __future__ import annotations
 
-import base64
-import io
 import json
 from typing import Any, Sequence
 
+from .images import encode_image
+
 _FALLBACK_BETA = "server-side-fallback-2026-07-01"
-_MAX_PNG_BYTES = 3_500_000  # the API rejects images over 5 MB; stay well below it
-
-
-def _encode_image(png: bytes) -> tuple[str, str]:
-    """(media_type, base64). Oversized PNGs (noisy game frames) are re-encoded as JPEG."""
-    if len(png) > _MAX_PNG_BYTES:
-        from PIL import Image
-
-        buf = io.BytesIO()
-        Image.open(io.BytesIO(png)).convert("RGB").save(buf, format="JPEG", quality=85)
-        return "image/jpeg", base64.standard_b64encode(buf.getvalue()).decode()
-    return "image/png", base64.standard_b64encode(png).decode()
 
 
 class ClaudeVision:
@@ -41,7 +29,7 @@ class ClaudeVision:
 
     def ask(self, png: bytes, task: str, required_keys: Sequence[str],
             schema: dict[str, Any] | None = None) -> dict[str, Any]:
-        media_type, data = _encode_image(png)
+        media_type, data = encode_image(png)
         output_config: dict[str, Any] = {"effort": self._effort}
         if schema is not None:
             output_config["format"] = {"type": "json_schema", "schema": schema}
