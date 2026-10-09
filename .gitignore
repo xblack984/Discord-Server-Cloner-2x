@@ -3,3 +3,9 @@ bypass.ts
 pnpm-lock.yaml
 666.json
 node_modules
+
+# xbox_agent
+__pycache__/
+*.pyc
+xbox_agent.sqlite3
+shots/

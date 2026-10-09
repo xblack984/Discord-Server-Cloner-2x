@@ -1,0 +1,8 @@
+# Windows 10/11, Python 3.11+
+vgamepad>=0.1.0        # needs the ViGEmBus driver installed
+mss>=9.0.1
+pytesseract>=0.3.10    # needs the Tesseract OCR binary installed
+Pillow>=10.0.0
+pyperclip>=1.8.2
+httpx>=0.27.0
+google-genai>=1.0.0    # Gemini 2.5 Flash (JSON mode)
