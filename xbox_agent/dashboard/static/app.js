@@ -39,7 +39,8 @@ async function act(button, fn) {
 }
 
 const SKIP_LABELS = { use_profile: "استخدم هذا الحساب" };  // set by the agent when "skip" has a specific meaning
-const QUESTION_LABELS = { start_game: "ابدأ اللعبة (زر A)", close_game: "أغلق اللعبة", keep: "اتركها وتابع" };
+const QUESTION_LABELS = { start_game: "ابدأ اللعبة (زر A)", close_game: "أغلق اللعبة", keep: "اتركها وتابع",
+  add_account: "سجّل بحساب جديد", use_profile: "استخدم الحساب المسجَّل" };
 
 // ---- screenshots (fetched with the token, shown through blob URLs)
 const shots = new Map();

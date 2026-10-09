@@ -90,9 +90,9 @@ class InspectTool(RigTestCase):
             report = inspect_screen(rig.window, FakeCapture(rig.console), FakeOcr(), FakeVision(), out)
             self.assertTrue(Path(report["screenshot"]).is_file())
         self.assertEqual(report["screen"], "sign_in_prompt")
-        self.assertEqual([i["label"] for i in report["menu_items"]], ["Sign in", "Sign in on another device"])
+        self.assertEqual([i["label"] for i in report["menu_items"]], ["Email, phone, or Skype", "Use another device", "Get a new email", "Forgot your account?"])
         self.assertTrue(report["menu_items"][0]["focused"])
-        self.assertIn("Sign in on another device", report["ocr_text"])
+        self.assertIn("Use another device", report["ocr_text"])
         self.assertEqual(rig.gamepad.taps, [])
         json.dumps(report)  # must be printable as JSON
 

@@ -86,7 +86,10 @@ def classify_screen(v: Vision, png: bytes) -> str:
         'lists your consoles with a connect button; "web_sign_in" is a Microsoft sign-in web page asking for an '
         'email, password or code; "guide_menu" is the Xbox Guide side panel (a row of tab icons, then entries such as '
         'Home and My games & apps) and it counts as the Guide even when a game is still visible behind or beside it; '
-        'every other value is a screen of the console itself.',
+        'the console\'s own "Sign in" screen is "sign_in_prompt" even though it shows an "Email, phone, or Skype" box '
+        'next to buttons such as "Use another device", "Get a new email" and "Forgot your account?" (the agent '
+        'never types in that box); use "password_prompt" only when a password is being asked for and "otp_prompt" only '
+        'for a security or verification code; every other value is a screen of the console itself.',
         "screen",
     )
     screen = str(out.get("screen", "unknown"))

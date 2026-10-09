@@ -88,7 +88,9 @@ class Settings:
     second_looks: int = 2  # extra looks at a screen the vision model could not recognise, before giving up
     # Decisions that otherwise stop the session and wait for you. "ask" keeps asking; the others decide.
     on_game_running: str = "ask"  # a game is on the console screen: ask | start (press A) | close | keep
-    on_signed_in: str = "ask"  # the console is already signed in: ask | use (continue with that profile)
+    # The console is already signed in (your main account): add (default: keep it, add the new account and sign
+    # in with a code) | use (work with the signed-in profile) | ask
+    on_signed_in: str = "add"
     allow_delete: bool = False  # profile removal is off until explicitly enabled
 
     # on-screen text / menu labels
@@ -98,7 +100,7 @@ class Settings:
     # are ignored). Defaults cover English, German and Arabic consoles; in the *_path settings "a|b" means
     # "a or b". Only "الصفحة الرئيسية", "ألعابي" and "قطع الاتصال" were seen on a real screen; the other German
     # and Arabic words are best guesses: tune them with `--inspect`.
-    login_labels: tuple[str, ...] = ("another device", "with a code", "use a code", "anderen gerät", "mit einem code",
+    login_labels: tuple[str, ...] = ("another device", "with a code", "use a code", "anderen gerät", "anderes gerät", "mit einem code",
                                      "mit code", "جهاز آخر", "باستخدام رمز")
     signin_labels: tuple[str, ...] = ("sign in", "anmelden", "تسجيل الدخول")
     redeem_path: tuple[str, ...] = ("store|متجر", "redeem|einlösen|استرداد")
@@ -110,14 +112,17 @@ class Settings:
     play_labels: tuple[str, ...] = ("play", "launch", "resume", "spielen", "starten", "fortsetzen", "تشغيل", "استئناف")
     game_match: str = r"modern\s*warfare"
     game_exclude: str = r"modern\s*warfare\W*\s*(ii|iii|2|3)\b|warzone"
+    add_account_path: tuple[str, ...] = (
+        "profile|profil|الملف الشخصي", "add or switch|hinzufügen oder wechseln|إضافة أو تبديل",
+        "add new|neu hinzufügen|إضافة جديد")
     delete_path: tuple[str, ...] = ("profile|profil|الملف الشخصي", "settings|einstellungen|إعدادات", "account|konto|حساب",
                                     "remove accounts|konten entfernen|إزالة الحسابات")
 
     def __post_init__(self) -> None:
         if self.on_game_running not in ("ask", "start", "close", "keep"):
             raise ValueError(f"XBOX_AGENT_ON_GAME_RUNNING must be ask, start, close or keep (got '{self.on_game_running}')")
-        if self.on_signed_in not in ("ask", "use"):
-            raise ValueError(f"XBOX_AGENT_ON_SIGNED_IN must be ask or use (got '{self.on_signed_in}')")
+        if self.on_signed_in not in ("ask", "add", "use"):
+            raise ValueError(f"XBOX_AGENT_ON_SIGNED_IN must be add, use or ask (got '{self.on_signed_in}')")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -171,6 +176,7 @@ class Settings:
             play_labels=_t("XBOX_AGENT_PLAY_LABELS", cls.play_labels),
             redeem_path=_t("XBOX_AGENT_REDEEM_PATH", cls.redeem_path),
             library_labels=_t("XBOX_AGENT_LIBRARY_LABELS", cls.library_labels),
+            add_account_path=_t("XBOX_AGENT_ADD_ACCOUNT_PATH", cls.add_account_path),
             delete_path=_t("XBOX_AGENT_DELETE_PATH", cls.delete_path),
             game_match=e("XBOX_AGENT_GAME_MATCH", cls.game_match),
             game_exclude=e("XBOX_AGENT_GAME_EXCLUDE", cls.game_exclude),

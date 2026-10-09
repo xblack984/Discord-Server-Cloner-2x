@@ -60,6 +60,14 @@ _ADOPTED_SKIPS = frozenset({State.EXTRACT_CODE, State.SEND_CODE, State.WAIT_ADMI
 _SKIP = object()
 
 
+def _same_account(a: str | None, b: str | None) -> bool:
+    """Gamertags compared the way a person reads them (case, '#1234' suffix style, spacing ignored)."""
+    if not a or not b:
+        return False
+    key = lambda t: re.sub(r"[^0-9a-z]", "", t.lower())  # noqa: E731
+    return key(a) == key(b)
+
+
 @dataclass
 class Tools:
     gamepad: Gamepad
@@ -86,6 +94,8 @@ class Session:
     reconnects: int = 0
     stop_after: State | None = None  # trial aid: end the session cleanly after this state
     adopted: bool = False  # the console was already signed in and the admin chose to use that profile
+    adding_account: bool = False  # the signed-in main account was kept and a new one is being added
+    main_gamertag: str | None = None  # the account that was signed in before we added ours: never signed out or removed
 
 
 class XboxAgent:
@@ -547,10 +557,10 @@ class XboxAgent:
                 return
             if screen == "guide_menu":
                 logged, tag = vt.detect_logged_in(self.t.vision, frame.png)
-                if logged and self._offer_signed_in_profile(ctx, tag):
-                    return
                 if logged:
-                    continue  # the admin signed out meanwhile and asked to look again
+                    if self._signed_in_found(ctx, tag, frame):
+                        return
+                    continue  # a new account is being added (or the admin signed out): look again
             if screen in ("sign_in_prompt", "guide_menu"):
                 # prefer "sign in with a code / on another device"; otherwise a plain "Sign in" leads there
                 self.nav.select([label_matcher(*self.cfg.login_labels), label_matcher(*self.cfg.signin_labels)],
@@ -591,29 +601,46 @@ class XboxAgent:
                 continue
             if screen == "home":  # the home screen only exists for a signed-in profile
                 _, tag = vt.detect_logged_in(self.t.vision, frame.png)
-                if self._offer_signed_in_profile(ctx, tag):
+                if self._signed_in_found(ctx, tag, frame):
                     return
                 continue
             raise Escalation(ErrorCategory.UNKNOWN, f"unexpected screen '{screen}' while reaching login")
         raise Escalation(ErrorCategory.UNKNOWN, "login-by-code screen not reached")
 
-    def _offer_signed_in_profile(self, ctx: Session, tag: str | None) -> bool:
-        """A profile is already signed in, so there is nothing to sign in. Ask the admin: use it (skip the
-        sign-in code) or stop. Returns True if the admin chose to use it."""
+    def _signed_in_found(self, ctx: Session, tag: str | None, frame: Frame) -> bool:
+        """A profile is already signed in (normally your main account). Decides what to do, per
+        XBOX_AGENT_ON_SIGNED_IN: add a new account next to it (default), work with it, or ask.
+        Returns True when REACH_LOGIN is finished (the signed-in profile is used), False to look at the
+        screen again (a new account is being added)."""
         who = f" ({tag})" if tag else ""
-        if self.cfg.on_signed_in == "use":  # decided in advance by XBOX_AGENT_ON_SIGNED_IN
+        policy = self.cfg.on_signed_in
+        if policy == "ask":
+            choice = self._ask(
+                ctx, State.REACH_LOGIN,
+                f"A profile{who} is already signed in on the console. Sign in with a new account (the signed-in "
+                "one stays as it is), or work with the signed-in profile?",
+                {"add_account": "Sign in with a new account", "use_profile": "Use the signed-in profile"}, frame)
+        else:  # decided in advance by XBOX_AGENT_ON_SIGNED_IN
+            choice = {"add": "add_account", "use": "use_profile"}[policy]
+            self._emit(ctx, State.REACH_LOGIN, "auto_choice", params={"choice": choice}, frame=frame,
+                       message=f"a profile{who} is already signed in; XBOX_AGENT_ON_SIGNED_IN={policy}")
+        if choice == "use_profile":
             ctx.adopted, ctx.gamertag = True, tag
             self._emit(ctx, State.REACH_LOGIN, "using_signed_in_profile", params={"gamertag": tag},
-                       message=f"continuing with the profile that is already signed in{who}; XBOX_AGENT_ON_SIGNED_IN=use")
+                       message=f"continuing with the profile that is already signed in{who}")
             return True
-        note = f"A profile{who} is already signed in on the console, so there is no sign-in code to send."
-        if self._escalate(ctx, State.REACH_LOGIN, Escalation(ErrorCategory.AUTH, note),
-                          allow_skip=True, skip_label="use_profile") != "skip":
-            return False
-        ctx.adopted, ctx.gamertag = True, tag
-        self._emit(ctx, State.REACH_LOGIN, "using_signed_in_profile", params={"gamertag": tag},
-                   message=f"continuing with the profile that is already signed in{who}")
-        return True
+        if ctx.adding_account:  # we already tried once and the console still shows a signed-in profile
+            raise Escalation(ErrorCategory.UNKNOWN, f"a profile{who} is still signed in after trying to add a new "
+                             "account; use the joystick panel to open 'Add or switch', then press retry")
+        if not tag:  # without the main account's name the new account could not be told apart from it later
+            raise Escalation(ErrorCategory.AUTH, "a profile is signed in but I could not read its name, so I could not "
+                             "tell it from the new account later; press retry, or use the joystick panel")
+        ctx.main_gamertag, ctx.adding_account = tag, True
+        self._emit(ctx, State.REACH_LOGIN, "adding_account", params={"main_gamertag": tag}, frame=frame,
+                   message=f"the profile{who} stays signed in; adding a new account (Guide > profile > Add or switch)")
+        self._open_via_guide(self.cfg.add_account_path, expected=None)
+        self.sleep(self.cfg.settle_s)
+        return False
 
     def _extract_code(self, ctx: Session) -> None:
         rx = re.compile(self.cfg.login_code_regex)
@@ -656,12 +683,16 @@ class XboxAgent:
             frame = self._snap()
             self._classify(frame)  # raises on password / OTP / captcha screens
             logged, tag = vt.detect_logged_in(self.t.vision, frame.png)
+            if logged and ctx.adding_account and _same_account(tag, ctx.main_gamertag):
+                logged = False  # still the main account on screen: the new one is not signed in (yet)
             if logged:
                 ctx.gamertag = tag
                 self._emit(ctx, State.DETECT_LOGGED_IN, "logged_in", params={"gamertag": tag}, frame=frame)
                 return
             if self.clock() >= deadline:
-                raise Escalation(ErrorCategory.AUTH, "admin confirmed sign-in but the console shows no signed-in user")
+                raise Escalation(ErrorCategory.AUTH, "admin confirmed sign-in but the console shows no new signed-in user"
+                                 if ctx.adding_account else
+                                 "admin confirmed sign-in but the console shows no signed-in user")
             self.sleep(self.cfg.settle_s * 2)
 
     def _watch_until(self, frame: Frame, leaves: Callable[[str], bool], timeout_s: float) -> bool:
@@ -770,12 +801,14 @@ class XboxAgent:
         ):
             raise Escalation(ErrorCategory.UNKNOWN, f"pasted text for {code.masked} not visible in the input box; not submitting")
 
-    def _open_via_guide(self, path: Iterable[str], expected: str) -> None:
+    def _open_via_guide(self, path: Iterable[str], expected: str | None) -> None:
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
         for label in path:
             self.nav.select(label_matcher(*label.split("|")), label.split("|")[0])
             self.sleep(self.cfg.settle_s)
+        if expected is None:  # the caller looks at the screen itself
+            return
         screen = self._classify(self._snap(), retries=self.cfg.second_looks)
         if screen != expected:
             raise Escalation(ErrorCategory.UNKNOWN, f"expected '{expected}' screen, found '{screen}'")
@@ -868,6 +901,12 @@ class XboxAgent:
 
     def _logout(self, ctx: Session) -> None:
         self._go_home()
+        if ctx.adding_account:
+            # "Sign out" signs out whoever is active. Never the main account: check who that is first.
+            _, tag = vt.detect_logged_in(self.t.vision, self._snap().png)
+            if not ctx.gamertag or not tag or not _same_account(tag, ctx.gamertag):
+                raise Escalation(ErrorCategory.AUTH, f"the active profile is '{tag or 'unknown'}', not the new account "
+                                 f"'{ctx.gamertag or 'unknown'}'; not signing anyone out")
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
         self.nav.select(label_matcher(*self.cfg.profile_labels), "Profile")
@@ -876,9 +915,15 @@ class XboxAgent:
         for _ in range(5):
             self.sleep(self.cfg.settle_s * 2)
             frame = self._snap()
-            if self._classify(frame) in ("sign_in_prompt", "login_code"):
+            screen = self._classify(frame)
+            back_to_main = False
+            if ctx.adding_account and screen == "home":  # the main account is the active profile again
+                _, tag = vt.detect_logged_in(self.t.vision, frame.png)
+                back_to_main = bool(tag) and not _same_account(tag, ctx.gamertag)
+            if screen in ("sign_in_prompt", "login_code") or back_to_main:
                 ctx.logged_out = True
-                self._emit(ctx, State.LOGOUT, "signed_out", frame=frame)
+                self._emit(ctx, State.LOGOUT, "signed_out", frame=frame,
+                           message="the new account was signed out; the main account is still signed in" if back_to_main else "")
                 return
         raise Escalation(ErrorCategory.UNKNOWN, "sign-out not confirmed on screen")
 
@@ -893,6 +938,11 @@ class XboxAgent:
         if not ctx.gamertag:
             ctx.profile_deleted = False
             ctx.delete_note = "skipped: gamertag unknown, cannot verify which profile to remove"
+            self._emit(ctx, State.REQUEST_DELETE_PROFILE, "delete_skipped", message=ctx.delete_note)
+            return
+        if ctx.adding_account and (not ctx.main_gamertag or _same_account(ctx.gamertag, ctx.main_gamertag)):
+            ctx.profile_deleted = False  # unknown main account: can't prove the removal would not hit it
+            ctx.delete_note = "skipped: cannot tell this account from the main account that was already signed in"
             self._emit(ctx, State.REQUEST_DELETE_PROFILE, "delete_skipped", message=ctx.delete_note)
             return
         token = self.token_factory()
@@ -920,6 +970,8 @@ class XboxAgent:
     def _delete_profile(self, ctx: Session) -> None:
         tag = ctx.gamertag
         assert tag and ctx.delete_note == "confirmed"
+        if _same_account(tag, ctx.main_gamertag):
+            raise Escalation(ErrorCategory.AUTH, f"'{tag}' is the main account that was already signed in; never removed")
         exact = re.compile(rf"^\W*{re.escape(tag)}\W*$", re.I)
         self._open_via_guide(self.cfg.delete_path, expected="accounts")
         self.nav.select(lambda label: bool(exact.match(label.strip())), f"account '{tag}'")
@@ -944,6 +996,7 @@ class XboxAgent:
             "codes": [{"id": c.id, "masked": c.masked, "status": c.status} for c in ctx.codes],
             "game_ready": ctx.game_ready, "logged_out": ctx.logged_out,
             "profile_deleted": ctx.profile_deleted, "delete_note": ctx.delete_note,
+            "kept_signed_in": ctx.main_gamertag,
             "errors": ctx.errors,
         }
         self._post("session_report", summary)

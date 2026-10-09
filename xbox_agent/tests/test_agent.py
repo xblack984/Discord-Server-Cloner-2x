@@ -26,6 +26,16 @@ def answer_questions(rig: Rig, choice: str, session_id: str = "s1") -> None:
     rig.dash.on_event["question"] = lambda p: p["message"] and rig.dash.push("answer", session_id=session_id, choice=choice)
 
 
+def answer_prefer(rig: Rig, *prefs: str, session_id: str = "s1") -> None:
+    """The admin answers every question with the first of `prefs` that is one of its buttons."""
+    def reply(p):
+        ids = [o["id"] for o in p.get("options", [])]
+        pick = next((x for x in prefs if x in ids), None)
+        if p["message"] and pick:
+            rig.dash.push("answer", session_id=session_id, choice=pick)
+    rig.dash.on_event["question"] = reply
+
+
 def abort_on(rig: Rig, *kinds: str, session_id: str = "s1") -> None:
     """End the run once one of these events is posted (so the abort queues up after any scripted answer)."""
     for kind in kinds:
@@ -353,11 +363,12 @@ class DecidedInAdvance(RigTestCase):
         self.assertEqual(rig.dash.of("error"), [])
         self.assertEqual(rig.last_report()["status"], "stopped_early")
         self.assertEqual(rig.last_report()["gamertag"], "AgentTest99")
-        self.assertIn("ON_SIGNED_IN=use", [r["message"] for r in rig.reports() if r["action"] == "using_signed_in_profile"][0])
+        self.assertIn("ON_SIGNED_IN=use", [r["message"] for r in rig.reports() if r["action"] == "auto_choice"][-1])
 
-    def test_the_defaults_still_ask(self):
+    def test_the_defaults(self):
         cfg = Settings()
-        self.assertEqual((cfg.on_game_running, cfg.on_signed_in), ("ask", "ask"))
+        # a game on screen is asked about; a signed-in main account is kept and a new account is added
+        self.assertEqual((cfg.on_game_running, cfg.on_signed_in), ("ask", "add"))
 
     def test_deletion_cannot_be_decided_in_advance(self):
         # there is deliberately no setting that answers the profile-removal confirmation
@@ -387,27 +398,26 @@ class SecondLooks(RigTestCase):
 
 
 class AlreadySignedIn(RigTestCase):
-    """The console already has a profile signed in (its Guide shows it): the agent asks, then adopts it."""
+    """The console already has a profile signed in (its Guide shows it) and the admin wants to work with it."""
 
     def adopt_rig(self, scene="game_signed_in", **cfg):
-        rig = self.make_rig(scene=scene, **cfg)
+        rig = self.make_rig(scene=scene, on_signed_in="use", **cfg)
         answer_questions(rig, "keep")
         rig.console.signed_in = True
-        rig.dash.on_event["error"] = lambda p: rig.dash.push("skip", session_id="s1")  # the admin clicks "use this profile"
         return rig
 
-    def test_the_admin_is_asked_and_the_error_card_offers_use_this_profile(self):
-        rig = self.make_rig(scene="game_signed_in")
-        answer_questions(rig, "keep")
-        abort_on(rig, "error")
+    def test_asking_offers_a_new_account_or_the_signed_in_one(self):
+        rig = self.make_rig(scene="game_signed_in", on_signed_in="ask")
+        answer_prefer(rig, "keep", "use_profile")  # "keep" for the game question, "use_profile" for the signed-in one
         rig.console.signed_in = True
-        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("start_session", session_id="s1", stop_after="DETECT_LOGGED_IN", codes=[])
         rig.agent.run_once()
-        err = rig.dash.of("error")[0]
-        self.assertEqual((err["category"], err["state"], err["can_skip"], err["skip_label"]),
-                         ("auth", "REACH_LOGIN", True, "use_profile"))
-        self.assertIn("AgentTest99", err["message"])  # the gamertag read from the Guide
-        self.assertEqual(rig.dash.of("login_code"), [])  # no sign-in code is invented for a signed-in console
+        asked = [q for q in rig.dash.of("question") if q["message"]]
+        signed_in_q = [q for q in asked if "already signed in" in q["message"]][0]
+        self.assertEqual([o["id"] for o in signed_in_q["options"]], ["add_account", "use_profile"])
+        self.assertIn("AgentTest99", signed_in_q["message"])  # the gamertag read from the Guide
+        self.assertEqual(rig.last_report()["gamertag"], "AgentTest99")  # "use_profile" was answered
+        self.assertEqual(rig.dash.of("login_code"), [])  # no sign-in code is invented for the profile in use
 
     def test_using_the_profile_skips_the_sign_in_states_and_goes_on(self):
         rig = self.adopt_rig()
@@ -441,14 +451,120 @@ class AlreadySignedIn(RigTestCase):
         self.assertEqual(rig.dash.of("delete_profile_request"), [])
         self.assertFalse(rig.console.game_running)  # the game it launched was closed again
 
-    def test_the_home_screen_of_a_signed_in_console_asks_the_same_question(self):
-        rig = self.make_rig(scene="home")
+
+class AddNewAccount(RigTestCase):
+    """The console always has a main account signed in; the agent keeps it and signs in a NEW account with a code."""
+
+    MAIN, NEW = "CostAlpaca", "AgentTest99"
+
+    def actions(self, rig):
+        return [r["action"] for r in rig.reports()]
+
+    def new_account_rig(self, scene="home", **cfg):
+        rig = self.make_rig(scene=scene, **cfg)
+        rig.console.signed_in = True
+        rig.console.main_tag = rig.console.active_tag = self.MAIN
+        rig.console.new_tag = self.NEW
+        rig.console.accounts = [self.MAIN, self.NEW]
+        return rig
+
+    def test_it_is_the_default_and_walks_guide_profile_add_or_switch_add_new(self):
+        rig = self.new_account_rig()
+        rig.dash.push("start_session", session_id="s1", stop_after="DETECT_LOGGED_IN", codes=[])
+        rig.dash.push("admin_login_confirmed", session_id="s1")
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("question"), [])  # nobody is asked
+        self.assertEqual(rig.dash.of("error"), [])
+        acts = self.actions(rig)
+        self.assertLess(acts.index("adding_account"), acts.index("login_screen_reached"))
+        adding = [r for r in rig.reports() if r["action"] == "adding_account"][0]
+        self.assertEqual(adding["params"]["main_gamertag"], self.MAIN)
+        self.assertEqual(len(rig.dash.of("login_code")), 1)  # the code goes to the dashboard as usual
+        rep = rig.last_report()
+        self.assertEqual((rep["status"], rep["gamertag"]), ("stopped_early", self.NEW))
+        self.assertEqual(rig.console.active_tag, self.NEW)
+        self.assertEqual(rig.console.main_tag, self.MAIN)  # untouched
+        self.assertNotIn("skipped", acts)  # sign-in states ran: this is a real sign-in, not an adopted profile
+
+    def test_a_full_session_signs_out_and_removes_only_the_new_account(self):
+        rig = self.new_account_rig()
+        script_full_session(rig)
+        rig.agent.run_once()
+        rep = rig.last_report()
+        self.assertEqual(rep["status"], "completed")
+        self.assertTrue(rep["logged_out"])
+        self.assertTrue(rep["profile_deleted"])
+        self.assertEqual((rep["gamertag"], rep["kept_signed_in"]), (self.NEW, self.MAIN))
+        self.assertTrue(rig.console.signed_in)  # the main account is still signed in ...
+        self.assertEqual(rig.console.active_tag, self.MAIN)  # ... and is the active profile again
+        self.assertEqual(rig.console.accounts, [self.MAIN])  # only the new one was removed
+        signed_out = [r for r in rig.reports() if r["action"] == "signed_out"][0]
+        self.assertIn("main account is still signed in", signed_out["message"])
+
+    def test_signing_in_as_the_main_account_again_is_not_accepted_as_the_new_one(self):
+        rig = self.new_account_rig(login_detect_timeout_s=10)
+        rig.console.new_tag = self.MAIN  # the admin typed the main account's login by mistake
         rig.dash.push("start_session", session_id="s1", codes=[])
-        rig.dash.push("abort_session", session_id="s1")
+        rig.dash.push("admin_login_confirmed", session_id="s1")
+        abort_on(rig, "error")
         rig.agent.run_once()
         err = rig.dash.of("error")[0]
-        self.assertEqual((err["category"], err["can_skip"], err["skip_label"]), ("auth", True, "use_profile"))
+        self.assertEqual((err["category"], err["state"]), ("auth", "DETECT_LOGGED_IN"))
+        self.assertIn("no new signed-in user", err["message"])
+        self.assertTrue(rig.last_report()["gamertag"] is None)
+
+    def test_it_never_signs_out_whoever_is_active_when_that_is_not_the_new_account(self):
+        from xbox_agent.agent import Session
+        rig = self.new_account_rig()
+        ctx = Session(id="s1", codes=[], gamertag=self.NEW, adding_account=True, main_gamertag=self.MAIN)
+        rig.console.active_tag = self.MAIN  # the console switched back to the main account meanwhile
+        with self.assertRaises(Escalation) as raised:
+            rig.agent._logout(ctx)
+        self.assertEqual(raised.exception.category.value, "auth")
+        self.assertNotIn(Button.A, rig.gamepad.taps[-1:])  # nothing was confirmed on the Sign out item
+        self.assertTrue(rig.console.signed_in and rig.console.active_tag == self.MAIN)
+
+    def test_the_main_account_can_never_be_removed(self):
+        from xbox_agent.agent import Session
+        rig = self.new_account_rig(allow_delete=True)
+        ctx = Session(id="s1", codes=[], gamertag=self.MAIN, adding_account=True, main_gamertag=self.MAIN)
+        rig.agent._request_delete(ctx)
+        self.assertEqual(rig.dash.of("delete_profile_request"), [])
+        self.assertIn("main account", ctx.delete_note)
+        ctx.delete_note = "confirmed"  # even a forced confirmation
+        with self.assertRaises(Escalation):
+            rig.agent._delete_profile(ctx)
+        self.assertEqual(rig.console.accounts, [self.MAIN, self.NEW])
+
+    def test_an_unreadable_main_account_name_stops_before_adding_anything(self):
+        rig = self.new_account_rig()
+        rig.console.active_tag = None  # the vision model could not read the gamertag
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        abort_on(rig, "error")
+        rig.agent.run_once()
+        err = rig.dash.of("error")[0]
+        self.assertEqual(err["category"], "auth")
+        self.assertIn("could not read", err["message"])
         self.assertEqual(rig.gamepad.taps, [])
+
+    def test_asking_with_add_account_answered_adds_the_account(self):
+        rig = self.new_account_rig(on_signed_in="ask")
+        answer_prefer(rig, "add_account")
+        rig.dash.on_event["login_code"] = lambda p: rig.dash.push("admin_login_confirmed", session_id="s1")
+        rig.dash.push("start_session", session_id="s1", stop_after="DETECT_LOGGED_IN", codes=[])
+        rig.agent.run_once()
+        self.assertEqual(rig.last_report()["gamertag"], self.NEW)
+        self.assertIn("adding_account", self.actions(rig))
+
+    def test_the_same_signed_in_screen_after_adding_does_not_loop(self):
+        rig = self.new_account_rig()
+        rig.console.add_goes_home = True  # "Add new" leads straight back to a signed-in home screen
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        abort_on(rig, "error")
+        rig.agent.run_once()
+        err = rig.dash.of("error")[0]
+        self.assertIn("still signed in after trying to add", err["message"])
+        self.assertEqual([r["action"] for r in rig.reports()].count("adding_account"), 1)
 
 
 class DashboardDown(RigTestCase):
@@ -686,12 +802,13 @@ class AuthRule(RigTestCase):
         self.assertIsNotNone([img for k, _, img in rig.dash.events if k == "error"][0])
         self.assertEqual(rig.last_report()["status"], "aborted")
 
-    def test_already_signed_in_profile_is_not_touched(self):
-        rig = self.make_rig(scene="home")
+    def test_already_signed_in_profile_is_not_touched_while_the_admin_is_asked(self):
+        rig = self.make_rig(scene="home", on_signed_in="ask")
         rig.dash.push("start_session", session_id="s1", codes=[])
-        rig.dash.push("abort_session", session_id="s1")
+        abort_on(rig, "question")
         rig.agent.run_once()
-        self.assertEqual(rig.dash.of("error")[0]["category"], "auth")
+        q = rig.dash.of("question")[0]
+        self.assertEqual([o["id"] for o in q["options"]], ["add_account", "use_profile"])
         self.assertEqual(rig.gamepad.taps, [])
 
     def test_admin_never_confirms_escalates_auth(self):

@@ -17,7 +17,7 @@ SCREEN = {
     "redeem": "redeem", "result": "redeem", "library": "library", "game_page": "game_page",
     "game_loading": "game_loading", "game_main_menu": "game_main_menu", "settings": "settings",
     "account_menu": "settings", "accounts": "accounts", "confirm_remove": "confirm_dialog",
-    "quit_confirm": "confirm_dialog", "password_prompt": "password_prompt",
+    "quit_confirm": "confirm_dialog", "add_menu": "guide_menu", "password_prompt": "password_prompt",
     "play_consoles": "play_consoles", "connecting": "unknown", "web_sign_in": "web_sign_in", "error_page": "error",
     "game_signed_out": "game_main_menu", "guide_signed_out": "guide_menu",
     "game_signed_in": "game_main_menu", "guide_signed_in": "guide_menu",
@@ -50,6 +50,11 @@ class FakeConsole:
         self.error_snaps = 0
         self.error_looks = 0  # the error page clears by itself once it has been looked at this many times (0 = never)
         self.accounts = ["AgentTest99", "OtherUser"]
+        self.active_tag: str | None = "AgentTest99"  # whose profile the console shows as the active user
+        self.main_tag: str | None = None  # a main account that stays signed in while a new one is added
+        self.new_tag: str | None = "AgentTest99"  # who the admin signs in as with the code
+        self.adding = False
+        self.add_goes_home = False  # "Add new" does nothing useful: the signed-in home screen is shown again
         self.pending_account: str | None = None
         self.outcomes: dict[str, str] = {}  # normalized code -> outcome kind
         self.result = "unknown"
@@ -65,7 +70,7 @@ class FakeConsole:
     def items(self) -> list[str]:
         s = self.scene
         table: dict[str, list[str]] = {
-            "sign_in_prompt": ["Sign in", "Sign in on another device"],
+            "sign_in_prompt": ["Email, phone, or Skype", "Use another device", "Get a new email", "Forgot your account?"],
             "play_consoles": ["Meine Konsole", "Verbinden"],
             "guide_signed_out": ["Sign in"],
             "guide_signed_in": ["Home", "My games & apps"],
@@ -74,7 +79,8 @@ class FakeConsole:
             "store": ["Games", "Redeem a code"],
             "library": ["Call of Duty: Modern Warfare II", "Call of Duty: Modern Warfare", "Forza Horizon"],
             "game_page": ["Play" if self.has_play else "Install", "Manage game"],
-            "profile_menu": ["Settings", "Sign out"],
+            "profile_menu": ["Settings", "Sign out", "Add or switch"],
+            "add_menu": ["Add new", "Switch"],
             "settings": ["Account", "General"],
             "account_menu": ["Remove accounts", "Sign-in & security"],
             "confirm_remove": ["Remove", "Cancel"],
@@ -117,7 +123,7 @@ class FakeConsole:
             return
         label = items[self.focus]
         step = {
-            ("sign_in_prompt", "Sign in on another device"): "login_code",
+            ("sign_in_prompt", "Use another device"): "login_code",
             ("guide_signed_out", "Sign in"): "sign_in_prompt",
             ("guide_signed_in", "Home"): "home",
             ("guide_with_quit", "Quit"): "sign_in_prompt",
@@ -126,7 +132,7 @@ class FakeConsole:
             ("guide_menu", "Profile & system"): "profile_menu", ("guide_menu", "Quit"): "quit_confirm",
             ("store", "Redeem a code"): "redeem",
             ("library", "Call of Duty: Modern Warfare"): "game_page",
-            ("profile_menu", "Settings"): "settings", ("settings", "Account"): "account_menu",
+            ("profile_menu", "Settings"): "settings", ("settings", "Account"): "account_menu", ("profile_menu", "Add or switch"): "add_menu",
             ("account_menu", "Remove accounts"): "accounts",
         }.get((s, label))
         if s == "play_consoles" and label == "Verbinden":
@@ -135,7 +141,13 @@ class FakeConsole:
         if s == "game_page" and label == "Play":
             self.game_running, self.loading_snaps = True, 0
             return self._go("game_loading")
+        if s == "add_menu" and label == "Add new":
+            self.adding = True
+            return self._go("home" if self.add_goes_home else "sign_in_prompt")
         if s == "profile_menu" and label == "Sign out":
+            if self.adding and self.main_tag:  # the main account is still signed in and becomes the active user again
+                self.adding, self.active_tag = False, self.main_tag
+                return self._go("home")
             self.signed_in = False
             return self._go("sign_in_prompt")
         if s == "accounts":
@@ -153,6 +165,8 @@ class FakeConsole:
 
     def admin_login(self) -> None:
         self.signed_in = True
+        if self.adding:
+            self.active_tag = self.new_tag
         self._go("home")
 
     def snapshot(self) -> dict[str, Any]:
@@ -187,7 +201,7 @@ class FakeConsole:
             ocr = " ".join(self.items())
         return {"scene": s, "items": self.items(), "focus": self.focus, "field": self.field,
                 "ocr": ocr, "result": self.result, "signed_in": self.signed_in,
-                "pending": self.pending_account, "code": "QX7M2K9P"}
+                "pending": self.pending_account, "code": "QX7M2K9P", "active": self.active_tag}
 
 
 class FakeGamepad:
@@ -286,7 +300,7 @@ class FakeVision:
         if key == "text":
             return {"text": s["field"]}
         if key == "logged_in":
-            return {"logged_in": s["signed_in"] and s["scene"] in ("home", "guide_signed_in"), "gamertag": "AgentTest99"}
+            return {"logged_in": s["signed_in"] and s["scene"] in ("home", "guide_signed_in"), "gamertag": s["active"]}
         if key == "state":
             return {"state": {"game_loading": "loading", "game_main_menu": "main_menu"}.get(s["scene"], "unknown")}
         if key == "match":
