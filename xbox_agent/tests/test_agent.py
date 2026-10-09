@@ -158,6 +158,95 @@ class StopAfter(RigTestCase):
             self.assertEqual(rig.last_report()["status"], "completed", bad)
 
 
+class GameOnScreen(RigTestCase):
+    """The console was left on a game (e.g. Call of Duty at its title screen, no profile)."""
+
+    def run_until_login_wait(self, scene):
+        rig = self.make_rig(scene=scene)
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")  # ends the run at WAIT_ADMIN_LOGIN
+        rig.agent.run_once()
+        return rig
+
+    def test_it_opens_the_guide_over_the_game_and_signs_in_by_code_without_quitting_it(self):
+        rig = self.run_until_login_wait("game_signed_out")
+        self.assertEqual(rig.gamepad.taps, [Button.GUIDE, Button.A, Button.DOWN, Button.A])
+        self.assertEqual([p["code"] for p in rig.dash.of("login_code")], ["QX7M2K9P"])
+        self.assertIn("open_guide", [r["action"] for r in rig.reports()])
+        self.assertEqual(rig.dash.of("error"), [])
+
+    def test_a_game_whose_guide_offers_no_sign_in_escalates_without_pressing_anything_risky(self):
+        rig = self.run_until_login_wait("game_main_menu")  # the fake guide has no sign-in entry here
+        err = rig.dash.of("error")[0]
+        self.assertEqual((err["category"], err["state"]), ("unknown", "REACH_LOGIN"))
+        self.assertIn("not found", err["message"])
+        self.assertNotIn(Button.A, rig.gamepad.taps)  # it only looked (Guide + scrolling), never confirmed anything
+        self.assertEqual(rig.window.reloads, 0)  # and did not mistake the end of the menu for a lost stream
+
+
+class AlreadySignedIn(RigTestCase):
+    """The console already has a profile signed in (its Guide shows it): the agent asks, then adopts it."""
+
+    def adopt_rig(self, scene="game_signed_in", **cfg):
+        rig = self.make_rig(scene=scene, **cfg)
+        rig.console.signed_in = True
+        rig.dash.on_event["error"] = lambda p: rig.dash.push("skip", session_id="s1")  # the admin clicks "use this profile"
+        return rig
+
+    def test_the_admin_is_asked_and_the_error_card_offers_use_this_profile(self):
+        rig = self.make_rig(scene="game_signed_in")
+        rig.console.signed_in = True
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        err = rig.dash.of("error")[0]
+        self.assertEqual((err["category"], err["state"], err["can_skip"], err["skip_label"]),
+                         ("auth", "REACH_LOGIN", True, "use_profile"))
+        self.assertIn("AgentTest99", err["message"])  # the gamertag read from the Guide
+        self.assertEqual(rig.dash.of("login_code"), [])  # no sign-in code is invented for a signed-in console
+
+    def test_using_the_profile_skips_the_sign_in_states_and_goes_on(self):
+        rig = self.adopt_rig()
+        rig.dash.push("start_session", session_id="s1", stop_after="DETECT_LOGGED_IN", codes=[])
+        rig.agent.run_once()
+        rep = rig.last_report()
+        self.assertEqual((rep["status"], rep["gamertag"]), ("stopped_early", "AgentTest99"))
+        skipped = [r["state"] for r in rig.reports() if r["action"] == "skipped"]
+        self.assertEqual(skipped, ["EXTRACT_CODE", "SEND_CODE", "WAIT_ADMIN_LOGIN"])
+        self.assertEqual(rig.dash.of("login_code"), [])
+        self.assertIn("using_signed_in_profile", [r["action"] for r in rig.reports()])
+
+    def test_a_full_session_with_an_adopted_profile_never_signs_it_out_or_removes_it(self):
+        rig = self.adopt_rig()
+        rig.console.outcomes = {GOOD: "redeemed"}
+        rig.dash.push("start_session", session_id="s1", codes=[{"id": "c1", "code": GOOD}])
+        rig.dash.push("close_game", session_id="s1")
+        # even a (forged or stale) delete confirmation could not reach a profile this session did not sign in
+        rig.dash.on_event["delete_profile_request"] = lambda p: rig.dash.push(
+            "confirm_delete_profile", session_id="s1", token=p["confirm_token"])
+        rig.agent.run_once()
+        rep = rig.last_report()
+        self.assertEqual(rep["status"], "completed")
+        self.assertEqual([c["status"] for c in rep["codes"]], ["redeemed"])  # it still did the actual work
+        self.assertTrue(rep["game_ready"])
+        self.assertFalse(rep["logged_out"])
+        self.assertFalse(rep["profile_deleted"])
+        self.assertIn("never removes", rep["delete_note"])
+        self.assertTrue(rig.console.signed_in)
+        self.assertEqual(rig.console.accounts, ["AgentTest99", "OtherUser"])
+        self.assertEqual(rig.dash.of("delete_profile_request"), [])
+        self.assertFalse(rig.console.game_running)  # the game it launched was closed again
+
+    def test_the_home_screen_of_a_signed_in_console_asks_the_same_question(self):
+        rig = self.make_rig(scene="home")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        err = rig.dash.of("error")[0]
+        self.assertEqual((err["category"], err["can_skip"], err["skip_label"]), ("auth", True, "use_profile"))
+        self.assertEqual(rig.gamepad.taps, [])
+
+
 class DashboardDown(RigTestCase):
     """The dashboard is not running (WinError 10061): say so once, plainly, and recover by itself."""
 

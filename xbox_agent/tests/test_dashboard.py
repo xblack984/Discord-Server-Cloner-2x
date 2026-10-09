@@ -120,6 +120,16 @@ class DashboardApi(unittest.TestCase):
         self.assertEqual((cmd["type"], cmd["payload"]), ("admin_login_confirmed", {"session_id": sid}))
         self.assertEqual(self.admin("admin_login_confirmed").status_code, 409)
 
+    def test_the_skip_button_can_carry_a_meaning_set_by_the_agent(self):
+        sid = self.start()
+        self.event("error", {"category": "auth", "message": "already signed in", "can_skip": True,
+                             "skip_label": "use_profile", "state": "REACH_LOGIN"}, sid=sid)
+        err = self.state()["session"]["error"]
+        self.assertEqual((err["can_skip"], err["skip_label"]), (True, "use_profile"))
+        self.assertEqual(self.admin("skip").status_code, 200)
+        js = self.client.get("/static/app.js").text
+        self.assertIn("use_profile", js)  # the UI knows how to label it
+
     def test_waiting_for_you_notice_is_shown_then_cleared(self):
         sid = self.start()
         self.event("notice", {"message": "Sign in to Microsoft in the browser"}, image=b"png", sid=sid)

@@ -32,6 +32,8 @@ from .tools.protocols import (
 log = logging.getLogger("xbox_agent")
 
 BLACK_LUMA = 4.0
+_ADOPTED_SKIPS = frozenset({State.EXTRACT_CODE, State.SEND_CODE, State.WAIT_ADMIN_LOGIN, State.LOGOUT,
+                            State.REQUEST_DELETE_PROFILE, State.DELETE_PROFILE})
 _SKIP = object()
 
 
@@ -60,6 +62,7 @@ class Session:
     errors: list[dict[str, Any]] = field(default_factory=list)
     reconnects: int = 0
     stop_after: State | None = None  # trial aid: end the session cleanly after this state
+    adopted: bool = False  # the console was already signed in and the admin chose to use that profile
 
 
 class XboxAgent:
@@ -131,7 +134,14 @@ class XboxAgent:
             for state, fn in steps:
                 if state is State.DELETE_PROFILE and ctx.delete_note != "confirmed":
                     continue  # only an explicit, token-matched confirmation removes a profile
-                if state is State.REDEEM_CODES:
+                if ctx.adopted and state in _ADOPTED_SKIPS:
+                    # The profile was signed in before this session: no sign-in code, and it is never
+                    # signed out or removed by us - the console is left as we found it.
+                    if state is State.REQUEST_DELETE_PROFILE:
+                        ctx.profile_deleted = False
+                        ctx.delete_note = "skipped: the profile was already signed in; this session never removes it"
+                    self._emit(ctx, state, "skipped", message="the console was already signed in; leaving the profile as it is")
+                elif state is State.REDEEM_CODES:
                     self._enter(ctx, state)
                     fn()
                 else:
@@ -337,7 +347,8 @@ class XboxAgent:
                 return cmd
         return None
 
-    def _escalate(self, ctx: Session, state: State, esc: Escalation, *, allow_skip: bool = False) -> str:
+    def _escalate(self, ctx: Session, state: State, esc: Escalation, *, allow_skip: bool = False,
+                  skip_label: str = "") -> str:
         """Report the problem (image + OCR text + category) and block until the admin answers."""
         frame = self._last_frame
         try:
@@ -353,7 +364,7 @@ class XboxAgent:
                 pass
         ctx.errors.append({"state": state.value, "category": esc.category.value, "message": esc.message})
         payload = {"session_id": ctx.id, "state": state.value, "category": esc.category.value,
-                   "message": esc.message, "ocr_text": text, "can_skip": allow_skip}
+                   "message": esc.message, "ocr_text": text, "can_skip": allow_skip, "skip_label": skip_label}
         self._post("error", payload, frame.png if frame else None)
         self._emit(ctx, state, "escalate", params={"category": esc.category.value, "can_skip": allow_skip},
                    message=esc.message, need_confirmation=True,
@@ -407,20 +418,57 @@ class XboxAgent:
             self.sleep(3.0)
 
     def _reach_login(self, ctx: Session) -> None:
-        for _ in range(4):
+        guide_presses = 0
+        for _ in range(8):
             frame = self._snap()
             screen = self._classify(frame)
             if screen == "login_code":
                 self._emit(ctx, State.REACH_LOGIN, "login_screen_reached", frame=frame)
                 return
-            if screen == "sign_in_prompt":
-                self.nav.select(label_matcher(*self.cfg.login_labels), "sign-in-with-code option")
+            if screen == "guide_menu":
+                logged, tag = vt.detect_logged_in(self.t.vision, frame.png)
+                if logged and self._offer_signed_in_profile(ctx, tag):
+                    return
+                if logged:
+                    continue  # the admin signed out meanwhile and asked to look again
+            if screen in ("sign_in_prompt", "guide_menu"):
+                # prefer "sign in with a code / on another device"; otherwise a plain "Sign in" leads there
+                self.nav.select([label_matcher(*self.cfg.login_labels), label_matcher(*self.cfg.signin_labels)],
+                                "sign-in option")
                 self.sleep(self.cfg.settle_s)
                 continue
-            if screen == "home":
-                raise Escalation(ErrorCategory.AUTH, "a profile is already signed in; admin must decide")
+            if screen in ("game_main_menu", "game_loading"):
+                # A game is on screen (e.g. left at its title screen, no profile). Don't quit it: the Guide
+                # offers the sign-in from on top of the game.
+                if guide_presses >= 2:
+                    raise Escalation(ErrorCategory.UNKNOWN,
+                                     f"a game is on screen ('{screen}') and the Guide did not lead to a sign-in")
+                guide_presses += 1
+                self._emit(ctx, State.REACH_LOGIN, "open_guide", frame=frame,
+                           message=f"a game is on screen ('{screen}'); opening the Guide to sign in")
+                self._press(Button.GUIDE)
+                self.sleep(self.cfg.settle_s)
+                continue
+            if screen == "home":  # the home screen only exists for a signed-in profile
+                _, tag = vt.detect_logged_in(self.t.vision, frame.png)
+                if self._offer_signed_in_profile(ctx, tag):
+                    return
+                continue
             raise Escalation(ErrorCategory.UNKNOWN, f"unexpected screen '{screen}' while reaching login")
         raise Escalation(ErrorCategory.UNKNOWN, "login-by-code screen not reached")
+
+    def _offer_signed_in_profile(self, ctx: Session, tag: str | None) -> bool:
+        """A profile is already signed in, so there is nothing to sign in. Ask the admin: use it (skip the
+        sign-in code) or stop. Returns True if the admin chose to use it."""
+        who = f" ({tag})" if tag else ""
+        note = f"A profile{who} is already signed in on the console, so there is no sign-in code to send."
+        if self._escalate(ctx, State.REACH_LOGIN, Escalation(ErrorCategory.AUTH, note),
+                          allow_skip=True, skip_label="use_profile") != "skip":
+            return False
+        ctx.adopted, ctx.gamertag = True, tag
+        self._emit(ctx, State.REACH_LOGIN, "using_signed_in_profile", params={"gamertag": tag},
+                   message=f"continuing with the profile that is already signed in{who}")
+        return True
 
     def _extract_code(self, ctx: Session) -> None:
         rx = re.compile(self.cfg.login_code_regex)
@@ -456,6 +504,8 @@ class XboxAgent:
             raise Escalation(ErrorCategory.AUTH, "admin did not confirm sign-in in time (code may have expired)")
 
     def _detect_logged_in(self, ctx: Session) -> None:
+        if ctx.adopted:
+            self._go_home()  # we may be on the Guide over a running game
         deadline = self.clock() + self.cfg.login_detect_timeout_s
         while True:
             frame = self._snap()
@@ -560,7 +610,7 @@ class XboxAgent:
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
         for label in path:
-            self.nav.select(label_matcher(label), label)
+            self.nav.select(label_matcher(*label.split("|")), label.split("|")[0])
             self.sleep(self.cfg.settle_s)
         screen = self._classify(self._snap())
         if screen != expected:
@@ -574,7 +624,7 @@ class XboxAgent:
             self.sleep(self.cfg.settle_s)
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
-        self.nav.select(label_matcher("home"), "Home")
+        self.nav.select(label_matcher(*self.cfg.home_labels), "Home")
         self.sleep(self.cfg.settle_s)
         if self._classify(self._snap()) != "home":
             raise Escalation(ErrorCategory.UNKNOWN, "cannot return to the home screen")
@@ -597,9 +647,10 @@ class XboxAgent:
         self.sleep(self.cfg.settle_s * 2)
         frame = self._snap()
         labels = [i.label for i in vt.read_menu(self.t.vision, frame.png).items]
-        play = label_matcher("play", "launch")
+        play = label_matcher(*self.cfg.play_labels)
         if not any(play(label) for label in labels) and any(
-            re.search(r"install|buy|purchase|get\b|download", label, re.I) for label in labels
+            re.search(r"install|buy|purchase|get\b|download|installieren|kaufen|herunterladen|erwerben|تثبيت|شراء|تنزيل|احصل", label, re.I)
+            for label in labels
         ):
             raise Escalation(ErrorCategory.GAME_STUCK, "game is not installed/owned; agent never buys or installs")
         self.nav.select(play, "Play button")
@@ -633,13 +684,13 @@ class XboxAgent:
     def _close_game(self, ctx: Session) -> None:
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
-        self.nav.select(label_matcher("quit", "exit"), "Quit")
+        self.nav.select(label_matcher(*self.cfg.quit_labels), "Quit")
         for _ in range(6):
             self.sleep(self.cfg.settle_s * 2)
             frame = self._snap()
             screen = self._classify(frame)
             if screen == "confirm_dialog":
-                self.nav.select(label_matcher("quit", "yes", "confirm"), "quit confirmation")
+                self.nav.select(label_matcher(*self.cfg.quit_labels, "yes", "ja", "confirm", "bestätigen", "نعم"), "quit confirmation")
             elif screen not in ("game_main_menu", "game_loading", "unknown"):
                 self._emit(ctx, State.CLOSE_GAME, "game_closed", frame=frame)
                 return
@@ -649,9 +700,9 @@ class XboxAgent:
         self._go_home()
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
-        self.nav.select(label_matcher("profile"), "Profile")
+        self.nav.select(label_matcher(*self.cfg.profile_labels), "Profile")
         self.sleep(self.cfg.settle_s)
-        self.nav.select(label_matcher("sign out"), "Sign out")
+        self.nav.select(label_matcher(*self.cfg.signout_labels), "Sign out")
         for _ in range(5):
             self.sleep(self.cfg.settle_s * 2)
             frame = self._snap()
@@ -706,7 +757,7 @@ class XboxAgent:
         frame = self._snap()
         if not vt.dialog_mentions(self.t.vision, frame.png, tag):
             raise Escalation(ErrorCategory.UNKNOWN, f"confirmation dialog does not clearly name '{tag}'; nothing removed")
-        self.nav.select(label_matcher("remove"), "Remove")
+        self.nav.select(label_matcher("remove", "entfernen", "إزالة", "حذف"), "Remove")
         self.sleep(self.cfg.settle_s * 2)
         frame = self._snap()
         still = [i for i in vt.read_menu(self.t.vision, frame.png).items if exact.match(i.label.strip())]

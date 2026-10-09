@@ -129,7 +129,8 @@ class DashboardState:
         elif kind == "error":
             s.error = {"category": str(payload.get("category"))[:30], "message": str(payload.get("message"))[:500],
                        "ocr_text": str(payload.get("ocr_text") or "")[:2000], "state": str(payload.get("state"))[:40],
-                       "can_skip": bool(payload.get("can_skip")), "shot": shot, "ts": self.clock()}
+                       "can_skip": bool(payload.get("can_skip")), "skip_label": str(payload.get("skip_label") or "")[:30],
+                       "shot": shot, "ts": self.clock()}
         elif kind == "notice":
             text = str(payload.get("message") or "")[:400]
             s.notice = {"message": text, "shot": shot} if text else None

@@ -89,12 +89,24 @@ class Settings:
     # on-screen text / menu labels
     login_code_regex: str = r"\b[A-Z0-9]{6,10}\b"
     console_labels: tuple[str, ...] = ("verbinden", "connect")  # the connect button on the web consoles page
-    login_labels: tuple[str, ...] = ("another device", "with a code", "use a code")
-    redeem_path: tuple[str, ...] = ("store", "redeem")
-    library_labels: tuple[str, ...] = ("my games", "library")
+    # Each item is matched as a substring of what is on screen (case, ® signs and Arabic spelling variants
+    # are ignored). Defaults cover English, German and Arabic consoles; in the *_path settings "a|b" means
+    # "a or b". Only "الصفحة الرئيسية", "ألعابي" and "قطع الاتصال" were seen on a real screen; the other German
+    # and Arabic words are best guesses: tune them with `--inspect`.
+    login_labels: tuple[str, ...] = ("another device", "with a code", "use a code", "anderen gerät", "mit einem code",
+                                     "mit code", "جهاز آخر", "باستخدام رمز")
+    signin_labels: tuple[str, ...] = ("sign in", "anmelden", "تسجيل الدخول")
+    redeem_path: tuple[str, ...] = ("store|متجر", "redeem|einlösen|استرداد")
+    library_labels: tuple[str, ...] = ("my games", "library", "meine spiele", "bibliothek", "ألعابي", "مكتبة")
+    home_labels: tuple[str, ...] = ("home", "startseite", "الصفحة الرئيسية")
+    quit_labels: tuple[str, ...] = ("quit", "exit", "beenden", "إنهاء")
+    signout_labels: tuple[str, ...] = ("sign out", "abmelden", "تسجيل الخروج")
+    profile_labels: tuple[str, ...] = ("profile", "profil", "الملف الشخصي")
+    play_labels: tuple[str, ...] = ("play", "launch", "resume", "spielen", "starten", "fortsetzen", "تشغيل", "استئناف")
     game_match: str = r"modern\s*warfare"
-    game_exclude: str = r"modern\s*warfare\s*(ii|iii|2|3)\b|warzone"
-    delete_path: tuple[str, ...] = ("profile", "settings", "account", "remove accounts")
+    game_exclude: str = r"modern\s*warfare\W*\s*(ii|iii|2|3)\b|warzone"
+    delete_path: tuple[str, ...] = ("profile|profil|الملف الشخصي", "settings|einstellungen|إعدادات", "account|konto|حساب",
+                                    "remove accounts|konten entfernen|إزالة الحسابات")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -136,6 +148,12 @@ class Settings:
             allow_delete=e("XBOX_AGENT_ALLOW_DELETE", "0") == "1",
             login_code_regex=e("XBOX_AGENT_LOGIN_CODE_REGEX", cls.login_code_regex),
             login_labels=_t("XBOX_AGENT_LOGIN_LABELS", cls.login_labels),
+            signin_labels=_t("XBOX_AGENT_SIGNIN_LABELS", cls.signin_labels),
+            home_labels=_t("XBOX_AGENT_HOME_LABELS", cls.home_labels),
+            quit_labels=_t("XBOX_AGENT_QUIT_LABELS", cls.quit_labels),
+            signout_labels=_t("XBOX_AGENT_SIGNOUT_LABELS", cls.signout_labels),
+            profile_labels=_t("XBOX_AGENT_PROFILE_LABELS", cls.profile_labels),
+            play_labels=_t("XBOX_AGENT_PLAY_LABELS", cls.play_labels),
             redeem_path=_t("XBOX_AGENT_REDEEM_PATH", cls.redeem_path),
             library_labels=_t("XBOX_AGENT_LIBRARY_LABELS", cls.library_labels),
             delete_path=_t("XBOX_AGENT_DELETE_PATH", cls.delete_path),

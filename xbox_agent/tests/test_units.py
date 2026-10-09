@@ -133,6 +133,25 @@ class NavigatorTests(unittest.TestCase):
             nav.select(label_matcher("zzz"), "zzz")
         self.assertLessEqual(len(self.pressed), Settings().nav_scan_limit + 1)
 
+    def test_reaching_the_end_of_the_menu_is_not_found_not_a_lost_stream(self):
+        self.pressed = []
+        nav = Navigator(Settings(), StubVision([menu("A", "B", focus=1)]), self.pressed.append,
+                        lambda: Frame(b"x", "static", 100.0), lambda s: None)  # pressing DOWN changes nothing
+        with self.assertRaises(Escalation) as cm:
+            nav.select(label_matcher("zzz"), "zzz")
+        self.assertEqual(cm.exception.category, ErrorCategory.UNKNOWN)
+        self.assertIn("not found", str(cm.exception))
+        self.assertEqual(self.pressed, [Button.DOWN])
+
+    def test_a_priority_list_uses_the_first_matcher_that_matches_anything(self):
+        nav = self.make([menu("Sign in", "Sign in on another device", focus=0), menu("Sign in", "Sign in on another device", focus=1)])
+        both = [label_matcher("another device"), label_matcher("sign in")]
+        self.assertEqual(nav.select(both, "sign-in"), "Sign in on another device")  # not ambiguous with "Sign in"
+        self.pressed.clear()
+        only_plain = self.make([menu("Sign in", focus=0)])
+        self.assertEqual(only_plain.select(both, "sign-in"), "Sign in")  # falls back to the second matcher
+        self.assertEqual(self.pressed, [Button.A])
+
     def test_frozen_frames_raise_stream_lost(self):
         self.pressed = []
         nav = Navigator(Settings(), StubVision([menu("A", "B", "T", focus=0)]), self.pressed.append,
@@ -140,6 +159,67 @@ class NavigatorTests(unittest.TestCase):
         with self.assertRaises(Escalation) as cm:
             nav.select(label_matcher("t"), "t")
         self.assertEqual(cm.exception.category, ErrorCategory.STREAM_LOST)
+
+
+class GermanLabels(unittest.TestCase):
+    """Defaults cover English and German consoles; unverified wording is tunable from .env."""
+
+    def test_default_labels_match_german_menu_entries(self):
+        cfg = Settings()
+        cases = [
+            (cfg.login_labels, "Auf einem anderen Gerät anmelden"), (cfg.signin_labels, "Anmelden"),
+            (cfg.library_labels, "Meine Spiele & Apps"), (cfg.quit_labels, "Spiel beenden"),
+            (cfg.signout_labels, "Abmelden"), (cfg.profile_labels, "Profil & System"),
+            (cfg.play_labels, "Fortsetzen"), (cfg.redeem_path[1].split("|"), "Code einlösen"),
+            (cfg.delete_path[1].split("|"), "Einstellungen"), (cfg.delete_path[3].split("|"), "Konten entfernen"),
+        ]
+        for needles, label in cases:
+            self.assertTrue(label_matcher(*needles)(label), (needles, label))
+
+    def test_english_labels_still_match_and_do_not_cross_match(self):
+        cfg = Settings()
+        self.assertTrue(label_matcher(*cfg.signout_labels)("Sign out"))
+        self.assertTrue(label_matcher(*cfg.play_labels)("Play"))
+        self.assertFalse(label_matcher(*cfg.signout_labels)("Sign in"))
+        self.assertFalse(label_matcher(*cfg.quit_labels)("Settings"))
+
+
+class ArabicAndSymbols(unittest.TestCase):
+    """Labels seen on a real Arabic console screen (the Guide) plus the spelling variants a vision model may return."""
+
+    def test_the_arabic_guide_entries_from_a_real_screen_match_the_defaults(self):
+        cfg = Settings()
+        self.assertTrue(label_matcher(*cfg.home_labels)("الصفحة الرئيسية"))
+        self.assertTrue(label_matcher(*cfg.library_labels)("ألعابي وتطبيقاتي"))
+        self.assertFalse(label_matcher(*cfg.home_labels)("ألعابي وتطبيقاتي"))
+        self.assertFalse(label_matcher(*cfg.library_labels)("الصفحة الرئيسية"))
+
+    def test_spelling_variants_and_diacritics_still_match(self):
+        m = label_matcher("ألعابي")
+        for variant in ("العابي وتطبيقاتي", "أَلْعَابِي", "ألعابـــي"):
+            self.assertTrue(m(variant), variant)
+        self.assertTrue(label_matcher("مكتبة")("المكتبه"))  # ta marbuta / ha
+        self.assertTrue(label_matcher("قطع الاتصال")("  قطع   الاتصال "))
+
+    def test_sign_in_and_sign_out_do_not_cross_match_in_arabic(self):
+        cfg = Settings()
+        self.assertTrue(label_matcher(*cfg.signin_labels)("تسجيل الدخول"))
+        self.assertFalse(label_matcher(*cfg.signin_labels)("تسجيل الخروج"))
+        self.assertTrue(label_matcher(*cfg.signout_labels)("تسجيل الخروج"))
+        self.assertFalse(label_matcher(*cfg.quit_labels)("تسجيل الخروج"))  # "exit" must not pick "sign out"
+
+    def test_the_game_list_from_the_real_arabic_guide_picks_exactly_one_title(self):
+        cfg = Settings()
+        pick = regex_matcher(cfg.game_match, cfg.game_exclude)
+        titles = ["Call of Duty®", "Call of Duty®: Modern Warfare®", "Call of Duty®: Modern Warfare® III"]
+        self.assertEqual([t for t in titles if pick(t)], ["Call of Duty®: Modern Warfare®"])
+        for no in ("Call of Duty®: Modern Warfare® II", "Call of Duty®: Modern Warfare® 2", "Call of Duty®: Modern Warfare®III",
+                   "Call of Duty®: Warzone™"):
+            self.assertFalse(pick(no), no)
+
+    def test_trademark_signs_are_ignored_by_every_matcher(self):
+        self.assertTrue(label_matcher("modern warfare")("Modern Warfare®"))
+        self.assertTrue(regex_matcher(r"modern\s*warfare")("Modern  Warfare™"))
 
 
 class VisionValidation(unittest.TestCase):

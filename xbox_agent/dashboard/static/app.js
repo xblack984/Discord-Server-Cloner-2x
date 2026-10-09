@@ -36,6 +36,8 @@ async function act(button, fn) {
   try { await fn(); banner(""); await refresh(); } catch (e) { banner(e.message); } finally { button.disabled = false; }
 }
 
+const SKIP_LABELS = { use_profile: "استخدم هذا الحساب" };  // set by the agent when "skip" has a specific meaning
+
 // ---- screenshots (fetched with the token, shown through blob URLs)
 const shots = new Map();
 async function showShot(img, id) {
@@ -76,6 +78,7 @@ function render(st) {
     $("#err-msg").textContent = err.message;
     $("#err-ocr").textContent = err.ocr_text || "(لا نص)";
     show($("#btn-skip"), err.can_skip);
+    $("#btn-skip").textContent = SKIP_LABELS[err.skip_label] || "تخطي";
     showShot($("#err-shot"), err.shot);
   }
 

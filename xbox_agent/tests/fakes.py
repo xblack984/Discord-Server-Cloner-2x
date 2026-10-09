@@ -19,6 +19,8 @@ SCREEN = {
     "account_menu": "settings", "accounts": "accounts", "confirm_remove": "confirm_dialog",
     "quit_confirm": "confirm_dialog", "password_prompt": "password_prompt",
     "play_consoles": "play_consoles", "connecting": "unknown", "web_sign_in": "web_sign_in", "error_page": "error",
+    "game_signed_out": "game_main_menu", "guide_signed_out": "guide_menu",
+    "game_signed_in": "game_main_menu", "guide_signed_in": "guide_menu",
 }
 RESULT_TEXT = {
     "redeemed": "Successfully redeemed! Enjoy your game",
@@ -59,6 +61,8 @@ class FakeConsole:
         table: dict[str, list[str]] = {
             "sign_in_prompt": ["Sign in", "Sign in on another device"],
             "play_consoles": ["Meine Konsole", "Verbinden"],
+            "guide_signed_out": ["Sign in"],
+            "guide_signed_in": ["Home", "My games & apps"],
             "home": ["My games & apps", "Store"],
             "store": ["Games", "Redeem a code"],
             "library": ["Call of Duty: Modern Warfare II", "Call of Duty: Modern Warfare", "Forza Horizon"],
@@ -81,7 +85,7 @@ class FakeConsole:
     def press(self, b: Button) -> None:
         s = self.scene
         if b is Button.GUIDE:
-            return self._go("guide_menu")
+            return self._go({"game_signed_out": "guide_signed_out", "game_signed_in": "guide_signed_in"}.get(s, "guide_menu"))
         if b is Button.B:
             if s not in ("game_loading", "game_main_menu"):
                 self._go("home")
@@ -104,6 +108,8 @@ class FakeConsole:
         label = items[self.focus]
         step = {
             ("sign_in_prompt", "Sign in on another device"): "login_code",
+            ("guide_signed_out", "Sign in"): "sign_in_prompt",
+            ("guide_signed_in", "Home"): "home",
             ("home", "My games & apps"): "library", ("home", "Store"): "store",
             ("guide_menu", "Home"): "home", ("guide_menu", "Store"): "store",
             ("guide_menu", "Profile & system"): "profile_menu", ("guide_menu", "Quit"): "quit_confirm",
@@ -261,7 +267,7 @@ class FakeVision:
         if key == "text":
             return {"text": s["field"]}
         if key == "logged_in":
-            return {"logged_in": s["signed_in"] and s["scene"] == "home", "gamertag": "AgentTest99"}
+            return {"logged_in": s["signed_in"] and s["scene"] in ("home", "guide_signed_in"), "gamertag": "AgentTest99"}
         if key == "state":
             return {"state": {"game_loading": "loading", "game_main_menu": "main_menu"}.get(s["scene"], "unknown")}
         if key == "match":
