@@ -357,7 +357,7 @@ class XboxAgent:
         if len(reads[0]) == 1 and reads[0] == reads[1]:
             code = reads[0][0]
         else:
-            source = "gemini"
+            source = "vision"
             code = vt.read_login_code(self.t.vision, frame.png)
         if not code or not rx.fullmatch(code):
             raise Escalation(ErrorCategory.UNKNOWN, "sign-in code unreadable or implausible")
@@ -438,7 +438,7 @@ class XboxAgent:
         outcome = classify_redeem_text(self.t.ocr.read(frame.png))
         if outcome is not None:
             return outcome, "tesseract"
-        return vt.read_redeem_result(self.t.vision, frame.png), "gemini"
+        return vt.read_redeem_result(self.t.vision, frame.png), "vision"
 
     def _paste_code(self, code: RedeemCode) -> None:
         if normalize_code(code.code) is None:  # defence in depth: nothing else is ever pasted

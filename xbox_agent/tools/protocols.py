@@ -31,8 +31,12 @@ class Ocr(Protocol):
 
 
 class Vision(Protocol):
-    def ask(self, png: bytes, task: str, required_keys: Sequence[str]) -> dict[str, Any]:
-        """Send an image + instructions to the model in JSON mode; return the parsed object."""
+    def ask(self, png: bytes, task: str, required_keys: Sequence[str],
+            schema: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Send an image + instructions to a vision model in JSON mode; return the parsed object.
+
+        `schema` is the JSON Schema of the expected answer; providers with constrained decoding
+        use it, the others rely on the prompt and check `required_keys`."""
 
 
 class Clipboard(Protocol):

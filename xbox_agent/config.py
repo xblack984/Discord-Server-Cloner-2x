@@ -13,8 +13,12 @@ def _f(name: str, default: float) -> float:
 class Settings:
     dashboard_url: str = "http://127.0.0.1:8000"
     dashboard_token: str = ""
+    vision_provider: str = "auto"  # auto | gemini | claude
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: str = "low"  # low | medium | high | xhigh | max
+    claude_fallbacks: bool = True
     tesseract_cmd: str = ""
     window_title: str = "Xbox"
     crop_top_px: int = 80
@@ -54,8 +58,12 @@ class Settings:
         return cls(
             dashboard_url=e("XBOX_AGENT_DASHBOARD_URL", cls.dashboard_url),
             dashboard_token=e("XBOX_AGENT_DASHBOARD_TOKEN", ""),
+            vision_provider=e("XBOX_AGENT_VISION_PROVIDER", cls.vision_provider),
             gemini_api_key=e("GEMINI_API_KEY", ""),
             gemini_model=e("XBOX_AGENT_GEMINI_MODEL", cls.gemini_model),
+            claude_model=e("XBOX_AGENT_CLAUDE_MODEL", cls.claude_model),
+            claude_effort=e("XBOX_AGENT_CLAUDE_EFFORT", cls.claude_effort),
+            claude_fallbacks=e("XBOX_AGENT_CLAUDE_FALLBACKS", "1") != "0",
             tesseract_cmd=e("TESSERACT_CMD", ""),
             window_title=e("XBOX_AGENT_WINDOW_TITLE", cls.window_title),
             crop_top_px=int(e("XBOX_AGENT_CROP_TOP_PX", cls.crop_top_px)),

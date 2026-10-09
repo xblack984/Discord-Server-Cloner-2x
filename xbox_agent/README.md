@@ -21,7 +21,7 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | القاعدة | التنفيذ |
 |---|---|
 | لا تجاوز للمصادقة، لا تخمين OTP/كلمات مرور | أي شاشة `password_prompt` / `otp_prompt` / `captcha` ترفع `Escalation(auth)` فورًا (`vision_tasks.AUTH_BLOCKING`). لا توجد أداة تكتب نصًا حرًا أصلًا. |
-| الإدخال النصي عبر Clipboard + Ctrl+V فقط | لا يُنسخ إلا كود Redeem مطابق للصيغة (25 حرفًا). بعد اللصق يُتحقق بـ OCR/Gemini أن النص ظهر في الحقل قبل ضغط A، ثم يُمسح الـ clipboard. |
+| الإدخال النصي عبر Clipboard + Ctrl+V فقط | لا يُنسخ إلا كود Redeem مطابق للصيغة (25 حرفًا). بعد اللصق يُتحقق بـ OCR/Vision أن النص ظهر في الحقل قبل ضغط A، ثم يُمسح الـ clipboard. |
 | لا حذف بروفايل بدون تأكيد صريح | يُصدر الوكيل توكنًا لمرة واحدة ويرسله مع الـ gamertag. الحذف لا يتم إلا بأمر `confirm_delete_profile` يحمل نفس التوكن. توكن خاطئ يُتجاهل، و`deny_delete_profile` أو انتهاء المهلة يعني لا حذف. عند الحذف يُختار حساب مطابق تمامًا للـ gamertag، ويُتحقق من نص نافذة التأكيد قبل الضغط. |
 | Redeem الرسمي فقط | عبر شاشة Redeem داخل الكونسول. لا يشتري الوكيل ولا يثبّت لعبة أبدًا (يتوقف عند زر Install/Buy). |
 | عند الشك: توقف + صورة + تقرير + انتظار | أي استثناء غير متوقع يتحول إلى `Escalation`: لقطة + نص OCR + تصنيف (`network/auth/code_invalid/code_used/game_stuck/stream_lost/unknown`) إلى الـ Dashboard، ثم انتظار `retry` / `skip` / `abort_session`. |
@@ -40,7 +40,12 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 
 | المتغير | الافتراضي |
 |---|---|
-| `GEMINI_API_KEY` | (مطلوب) |
+| `XBOX_AGENT_VISION_PROVIDER` | `auto`؛ القيم: `auto` / `gemini` / `claude` (انظر «مزوّد الرؤية») |
+| `GEMINI_API_KEY` | مطلوب فقط عند استخدام Gemini |
+| `ANTHROPIC_API_KEY` | مطلوب فقط عند استخدام Claude (أو سجّل الدخول بـ `ant auth login`) |
+| `XBOX_AGENT_CLAUDE_MODEL` | `claude-opus-5-5` |
+| `XBOX_AGENT_CLAUDE_EFFORT` | `low` (`low`…`max`) |
+| `XBOX_AGENT_CLAUDE_FALLBACKS` | `1`؛ ضع `0` لإيقاف الـ fallback من جهة الخادم |
 | `XBOX_AGENT_DASHBOARD_URL` | `http://127.0.0.1:8000` |
 | `XBOX_AGENT_DASHBOARD_TOKEN` | فارغ (Bearer) |
 | `XBOX_AGENT_WINDOW_TITLE` | `Xbox` (جزء من عنوان نافذة المتصفح) |
@@ -52,6 +57,25 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 5. من جذر المستودع:
    - `python -m xbox_agent --check` يتحقق من النافذة والالتقاط وOCR
    - `python -m xbox_agent` حلقة دائمة، أو `--once` لجلسة واحدة
+
+## مزوّد الرؤية (Vision)
+
+الرؤية غير مربوطة بمزوّد معيّن: الوكيل يتعامل مع واجهة `Vision.ask(...)` فقط، ولكل مهمة (تصنيف الشاشة، قراءة القائمة،
+نتيجة Redeem، …) مخطط JSON في `vision_tasks.py`. المتاح حاليًا:
+
+| المزوّد | الملف | ملاحظات |
+|---|---|---|
+| `gemini` | `tools/gemini_vision.py` | `gemini-2.5-flash` في JSON mode |
+| `claude` | `tools/claude_vision.py` | Anthropic SDK، مخرجات مقيّدة بالمخطط (`output_config.format`)، النموذج الافتراضي `claude-opus-5-5` |
+
+- `auto` (الافتراضي): Gemini إن وُجد `GEMINI_API_KEY`، وإلا Claude. عند وجود المفتاحين حدّد المزوّد صراحة.
+- مع Claude: الجهد `low` افتراضيًا لأن كل استدعاء قراءة بسيطة لشاشة واحدة والوكيل يكرّرها كثيرًا. لتوفير الكلفة غيّر
+  `XBOX_AGENT_CLAUDE_MODEL` (مثلًا `claude-haiku-5-5`)، وارفع `XBOX_AGENT_CLAUDE_EFFORT` إن كانت القراءة غير دقيقة.
+- مع Claude يُفعَّل الـ fallback من جهة الخادم (`server-side-fallback-2026-07-01`): لو رفض مصنّف الأمان طلبًا يُعاد تشغيله
+  على نموذج بديل داخل نفس الاستدعاء. هو beta ومتاح على Claude API (وClaude Platform on AWS) فقط؛ عطّله بـ `XBOX_AGENT_CLAUDE_FALLBACKS=0`.
+  أي رفض أو إجابة غير صالحة تتحول إلى تصعيد للمشرف كباقي الأخطاء، ولا يخمّن الوكيل.
+- OpenAI غير مدعوم عمدًا (حسب الـ prompt الأصلي). لإضافة مزوّد آخر: صنف يطبّق `ask(png, task, required_keys, schema)`
+  ويعيد `dict`، ثم أضفه في `tools/vision.py`.
 
 ## عقد الـ Dashboard (يجب أن يوفّره الـ FastAPI)
 
@@ -85,7 +109,7 @@ python -m unittest discover -s xbox_agent/tests -t .
 
 ## حدود معروفة
 
-- **لم تُجرَّب على Xbox حقيقي ولا على Windows.** تنفيذات `vgamepad` و`mss` و`pytesseract` و`google-genai` وملف `windows_input.py` كُتبت لكن لم تُشغَّل هنا؛ المختبَر هو منطق الوكيل عبر الأدوات الوهمية.
+- **لم تُجرَّب على Xbox حقيقي ولا على Windows.** تنفيذات `vgamepad` و`mss` و`pytesseract` و`windows_input.py` ومزوّدا الرؤية مع شبكتهما الفعلية كُتبت لكن لم تُشغَّل هنا (لا مفاتيح API)؛ المختبَر هو منطق الوكيل عبر الأدوات الوهمية، وشكل الطلب إلى Claude عبر عميل وهمي.
 - مسارات القوائم في `config.py` (`redeem_path`, `library_labels`, `delete_path`, `login_labels`) افتراضات عن واجهة Xbox بالإنجليزية، وستحتاج ضبطًا على الكونسول الفعلي. حين لا يجد الوكيل العنصر أو يجده بشكل ملتبس يصعّد ولا يخمّن.
 - إعادة الاتصال تستخدم F5 (مفتاح تنقل، لا إدخال نصي). لا يُستخدم الماوس إطلاقًا.
 - استخدمه فقط على حسابات وكونسولات تملكها أو مخوّل بتشغيلها.

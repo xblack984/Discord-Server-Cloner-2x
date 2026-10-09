@@ -215,7 +215,7 @@ class FakeVision:
     def __init__(self):
         self.calls: list[str] = []
 
-    def ask(self, png: bytes, task: str, required_keys) -> dict[str, Any]:
+    def ask(self, png: bytes, task: str, required_keys, schema=None) -> dict[str, Any]:
         key = required_keys[0]
         self.calls.append(key)
         s = json.loads(png)

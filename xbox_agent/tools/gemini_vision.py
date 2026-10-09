@@ -14,7 +14,8 @@ class GeminiVision:
         self._client = genai.Client(api_key=api_key)
         self._model = model
 
-    def ask(self, png: bytes, task: str, required_keys: Sequence[str]) -> dict[str, Any]:
+    def ask(self, png: bytes, task: str, required_keys: Sequence[str],
+            schema: dict[str, Any] | None = None) -> dict[str, Any]:
         from google.genai import types
 
         config = types.GenerateContentConfig(response_mime_type="application/json", temperature=0)

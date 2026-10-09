@@ -212,7 +212,7 @@ class Escalations(RigTestCase):
 
     def test_unexpected_exception_escalates_instead_of_crashing(self):
         rig = self.make_rig()
-        rig.vision.ask = lambda *a, **k: (_ for _ in ()).throw(ValueError("Gemini returned unusable JSON"))
+        rig.vision.ask = lambda *a, **k: (_ for _ in ()).throw(ValueError("vision backend returned unusable JSON"))
         rig.dash.push("start_session", session_id="s1", codes=[])
         rig.dash.push("abort_session", session_id="s1")
         rig.agent.run_once()
@@ -229,16 +229,16 @@ class CodeExtraction(RigTestCase):
         rig.agent.run_once()
         return rig
 
-    def test_clean_ocr_read_does_not_call_gemini(self):
+    def test_clean_ocr_read_does_not_call_vision(self):
         rig = self.run_to_admin_wait("Your code QX7M2K9P")
         done = [r for r in rig.reports() if r["action"] == "code_extracted"][0]
         self.assertEqual(done["params"]["source"], "tesseract")
         self.assertNotIn("code", rig.vision.calls)
 
-    def test_ambiguous_ocr_falls_back_to_gemini(self):
+    def test_ambiguous_ocr_falls_back_to_vision(self):
         rig = self.run_to_admin_wait()  # "microsoft.com/link" also looks like a code to the regex
         done = [r for r in rig.reports() if r["action"] == "code_extracted"][0]
-        self.assertEqual(done["params"]["source"], "gemini")
+        self.assertEqual(done["params"]["source"], "vision")
         self.assertEqual(rig.dash.of("login_code")[0]["code"], "QX7M2K9P")
 
 

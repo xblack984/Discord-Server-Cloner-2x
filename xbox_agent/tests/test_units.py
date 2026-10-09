@@ -88,7 +88,7 @@ class StubVision:
     def __init__(self, menus):
         self.menus = list(menus)
 
-    def ask(self, png, task, required_keys):
+    def ask(self, png, task, required_keys, schema=None):
         return self.menus.pop(0) if len(self.menus) > 1 else self.menus[0]
 
 

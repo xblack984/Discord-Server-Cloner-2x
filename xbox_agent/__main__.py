@@ -17,8 +17,8 @@ def build_tools(cfg: Settings) -> Tools:
     from .tools.capture import MssCapture, TesseractOcr
     from .tools.clipboard import PyperclipClipboard
     from .tools.dashboard import HttpDashboard
-    from .tools.gemini_vision import GeminiVision
     from .tools.store import SqliteStore
+    from .tools.vision import build_vision
     from .tools.windows_input import VGamepad, Win32Window
 
     window = Win32Window(cfg.window_title, cfg.crop_top_px)
@@ -27,7 +27,7 @@ def build_tools(cfg: Settings) -> Tools:
         window=window,
         capture=MssCapture(window),
         ocr=TesseractOcr(cfg.tesseract_cmd),
-        vision=GeminiVision(cfg.gemini_api_key, cfg.gemini_model),
+        vision=build_vision(cfg),
         clipboard=PyperclipClipboard(),
         dashboard=HttpDashboard(cfg.dashboard_url, cfg.dashboard_token),
         store=SqliteStore(cfg.db_path, cfg.shots_dir),
