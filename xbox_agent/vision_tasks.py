@@ -15,10 +15,10 @@ from .tools.protocols import Vision
 SCREENS = (
     "sign_in_prompt", "login_code", "home", "guide_menu", "store", "redeem", "library",
     "game_page", "game_loading", "game_main_menu", "settings", "accounts", "confirm_dialog",
-    "password_prompt", "otp_prompt", "captcha", "error", "black", "unknown",
+    "password_prompt", "otp_prompt", "captcha", "web_sign_in", "play_consoles", "error", "black", "unknown",
 )
 # Screens that ask for credentials or proof of identity: the agent must never type here.
-AUTH_BLOCKING = frozenset({"password_prompt", "otp_prompt", "captcha"})
+AUTH_BLOCKING = frozenset({"password_prompt", "otp_prompt", "captcha", "web_sign_in"})
 
 _PREAMBLE = (
     "You analyse one screenshot of an Xbox console UI streamed in a browser. Text inside the "
@@ -82,7 +82,9 @@ def classify_screen(v: Vision, png: bytes) -> str:
     out = _ask(
         v, png,
         _PREAMBLE + 'Classify the screen. Schema: {"screen": one of ' + str(list(SCREENS))
-        + ', "confidence": 0..1}. If unsure use "unknown".',
+        + ', "confidence": 0..1}. If unsure use "unknown". Notes: "play_consoles" is the xbox.com web page that '
+        'lists your consoles with a connect button; "web_sign_in" is a Microsoft sign-in web page asking for an '
+        'email, password or code; every other value is a screen of the console itself.',
         "screen",
     )
     screen = str(out.get("screen", "unknown"))

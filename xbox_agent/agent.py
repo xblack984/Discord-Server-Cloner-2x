@@ -343,11 +343,37 @@ class XboxAgent:
     # ------------------------------------------------------------------ states
 
     def _start_session(self, ctx: Session) -> None:
-        frame = self._snap()
-        screen = self._classify(frame)
-        if screen == "unknown":
-            raise Escalation(ErrorCategory.STREAM_LOST, "cannot recognise anything on the stream")
+        if self.cfg.open_play_url and self.cfg.play_url and self.t.window.ensure_open(self.cfg.play_url):
+            self._emit(ctx, State.START_SESSION, "opened_url", params={"url": self.cfg.play_url},
+                       message="opened the Remote Play page in a new browser window")
+            self.sleep(self.cfg.page_load_s)
+        screen, frame = self._connect_to_console(ctx)
         self._emit(ctx, State.START_SESSION, "stream_ok", params={"screen": screen}, frame=frame)
+
+    def _connect_to_console(self, ctx: Session) -> tuple[str, Frame]:
+        """From the web page to a live console screen. Credentials are never typed: a Microsoft
+        sign-in page raises an auth escalation (the admin signs in once in that browser)."""
+        deadline = self.clock() + self.cfg.connect_timeout_s
+        pressed = False
+        errors = 0
+        while True:
+            frame = self._snap()
+            screen = self._classify(frame)  # raises on sign-in / password / OTP / captcha pages
+            errors = errors + 1 if screen == "error" else 0
+            if errors >= 2:
+                raise Escalation(ErrorCategory.UNKNOWN, "the page keeps showing an error instead of the console")
+            if screen == "play_consoles" and not pressed:
+                self.nav.select(label_matcher(*self.cfg.console_labels), "the connect button of the console")
+                pressed = True
+                self._emit(ctx, State.START_SESSION, "connecting", frame=frame,
+                           message="pressed connect on the consoles page")
+            elif screen not in ("play_consoles", "unknown", "black", "error"):
+                return screen, frame
+            if self.clock() >= deadline:
+                if pressed:
+                    raise Escalation(ErrorCategory.NETWORK, "no console screen appeared after pressing connect")
+                raise Escalation(ErrorCategory.UNKNOWN, f"could not reach the console; the screen is '{screen}'")
+            self.sleep(3.0)
 
     def _reach_login(self, ctx: Session) -> None:
         for _ in range(4):

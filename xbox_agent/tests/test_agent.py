@@ -158,6 +158,76 @@ class StopAfter(RigTestCase):
             self.assertEqual(rig.last_report()["status"], "completed", bad)
 
 
+class OpenPlayPage(RigTestCase):
+    URL = "https://www.xbox.com/de-DE/play/consoles"
+
+    def run_until_login(self, scene="sign_in_prompt", **cfg):
+        rig = self.make_rig(scene=scene, **cfg)
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")  # ends the run at the first wait
+        rig.agent.run_once()
+        return rig
+
+    def actions(self, rig):
+        return [r["action"] for r in rig.reports()]
+
+    def test_the_agent_opens_the_consoles_page_itself_once(self):
+        rig = self.run_until_login()
+        self.assertEqual(rig.window.opened, [self.URL])
+        opened = [r for r in rig.reports() if r["action"] == "opened_url"]
+        self.assertEqual(opened[0]["params"], {"url": self.URL})
+        rig.dash.push("start_session", session_id="s2", codes=[])
+        rig.dash.push("abort_session", session_id="s2")
+        rig.agent.run_once()
+        self.assertEqual(rig.window.opened, [self.URL])  # the second session reuses the window
+
+    def test_the_url_comes_from_the_settings_and_opening_can_be_turned_off(self):
+        rig = self.run_until_login(play_url="https://example.test/play")
+        self.assertEqual(rig.window.opened, ["https://example.test/play"])
+        rig = self.run_until_login(open_play_url=False)
+        self.assertEqual(rig.window.opened, [])
+        self.assertNotIn("opened_url", self.actions(rig))
+
+    def test_it_presses_connect_on_the_consoles_page_and_waits_for_the_console(self):
+        rig = self.run_until_login(scene="play_consoles")
+        self.assertEqual(rig.gamepad.taps[:2], [Button.DOWN, Button.A])  # focus moves to "Verbinden", then A
+        self.assertIn("connecting", self.actions(rig))
+        ok = [r for r in rig.reports() if r["action"] == "stream_ok"][0]
+        self.assertEqual(ok["params"]["screen"], "sign_in_prompt")
+        self.assertEqual(rig.dash.of("error"), [])
+
+    def test_console_labels_are_configurable(self):
+        rig = self.run_until_login(scene="play_consoles", console_labels=("meine konsole",))
+        self.assertEqual(rig.gamepad.taps[:1], [Button.A])  # already focused: no DOWN needed
+
+    def test_a_microsoft_sign_in_page_stops_the_agent_without_typing_anything(self):
+        rig = self.make_rig(scene="web_sign_in")
+        rig.dash.push("start_session", session_id="s1", codes=[{"id": "c1", "code": GOOD}])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("error")[0]["category"], "auth")
+        self.assertEqual(rig.gamepad.taps, [])
+        self.assertEqual((rig.window.pastes, rig.clipboard.history), (0, []))
+
+    def test_pressing_connect_but_never_getting_a_console_escalates_as_network(self):
+        rig = self.make_rig(scene="play_consoles", connect_timeout_s=10)
+        rig.console.connect_stuck = True
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        err = rig.dash.of("error")[0]
+        self.assertEqual((err["category"], err["state"]), ("network", "START_SESSION"))
+        self.assertEqual(rig.gamepad.taps.count(Button.A), 1)  # it pressed connect once, not repeatedly
+
+    def test_a_page_that_keeps_showing_an_error_escalates_quickly(self):
+        rig = self.run_until_login(scene="error_page")
+        err = rig.dash.of("error")[0]
+        self.assertEqual(err["category"], "unknown")
+        self.assertIn("error", err["message"])
+        self.assertEqual(rig.gamepad.taps, [])
+        self.assertLess(rig.time.now, 30)  # did not sit out the whole connect timeout
+
+
 class DeleteDisabled(RigTestCase):
     def test_deletion_is_off_by_default_even_if_the_dashboard_would_confirm(self):
         rig = self.make_rig(allow_delete=False)

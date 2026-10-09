@@ -50,7 +50,11 @@ class Settings:
     claude_effort: str = "low"  # low | medium | high | xhigh | max
     claude_fallbacks: bool = True
     tesseract_cmd: str = ""
-    window_title: str = "Xbox"
+    window_title: str = "Xbox"  # part of the Remote Play window's title (used to reuse a window that is already open)
+    window_exclude: tuple[str, ...] = ("XboxAgent",)  # titles with these words are never the Remote Play window
+    play_url: str = "https://www.xbox.com/de-DE/play/consoles"
+    open_play_url: bool = True  # the agent opens play_url in its own browser window
+    browser: str = "auto"  # auto | chrome | edge | full path to chrome.exe / msedge.exe
     crop_top_px: int = 80
     db_path: str = "xbox_agent.sqlite3"
     shots_dir: str = "shots"
@@ -59,6 +63,8 @@ class Settings:
     settle_s: float = 1.2
     poll_interval_s: float = 5.0
     reload_wait_s: float = 8.0
+    page_load_s: float = 8.0
+    connect_timeout_s: float = 90.0
     redeem_result_timeout_s: float = 25.0
     login_detect_timeout_s: float = 60.0
     admin_login_timeout_s: float = 900.0
@@ -76,6 +82,7 @@ class Settings:
 
     # on-screen text / menu labels
     login_code_regex: str = r"\b[A-Z0-9]{6,10}\b"
+    console_labels: tuple[str, ...] = ("verbinden", "connect")  # the connect button on the web consoles page
     login_labels: tuple[str, ...] = ("another device", "with a code", "use a code")
     redeem_path: tuple[str, ...] = ("store", "redeem")
     library_labels: tuple[str, ...] = ("my games", "library")
@@ -101,6 +108,13 @@ class Settings:
             claude_fallbacks=e("XBOX_AGENT_CLAUDE_FALLBACKS", "1") != "0",
             tesseract_cmd=e("TESSERACT_CMD", ""),
             window_title=e("XBOX_AGENT_WINDOW_TITLE", cls.window_title),
+            window_exclude=_t("XBOX_AGENT_WINDOW_EXCLUDE", cls.window_exclude),
+            play_url=e("XBOX_AGENT_PLAY_URL", cls.play_url),
+            open_play_url=e("XBOX_AGENT_OPEN_PLAY_URL", "1") != "0",
+            browser=e("XBOX_AGENT_BROWSER", cls.browser),
+            page_load_s=_f("XBOX_AGENT_PAGE_LOAD_S", cls.page_load_s),
+            connect_timeout_s=_f("XBOX_AGENT_CONNECT_TIMEOUT_S", cls.connect_timeout_s),
+            console_labels=_t("XBOX_AGENT_CONSOLE_LABELS", cls.console_labels),
             crop_top_px=int(e("XBOX_AGENT_CROP_TOP_PX", cls.crop_top_px)),
             db_path=e("XBOX_AGENT_DB", cls.db_path),
             shots_dir=e("XBOX_AGENT_SHOTS_DIR", cls.shots_dir),

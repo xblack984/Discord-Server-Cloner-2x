@@ -9,6 +9,7 @@ from unittest import mock
 
 from xbox_agent.check import CheckResult, format_results, inspect_screen, run_checks
 from xbox_agent.config import Settings, load_env_file
+from xbox_agent.tools.browser import find_browser, new_window_command, title_matches
 from xbox_agent.tests.fakes import FakeCapture, FakeOcr, FakeVision, Rig, RigTestCase
 
 
@@ -89,6 +90,56 @@ class InspectTool(RigTestCase):
         rig.window.focusable = False
         with self.assertRaisesRegex(RuntimeError, "foreground"):
             inspect_screen(rig.window, FakeCapture(rig.console), FakeOcr(), FakeVision())
+
+
+class BrowserLaunch(unittest.TestCase):
+    ENV = {"ProgramFiles": r"C:\PF", "ProgramFiles(x86)": r"C:\PF86", "LOCALAPPDATA": r"C:\Users\me\AppData\Local"}
+
+    def found(self, *paths):
+        return lambda p: p in paths
+
+    def test_auto_prefers_chrome_then_edge(self):
+        chrome = r"C:\PF\Google\Chrome\Application\chrome.exe"
+        edge = r"C:\PF86\Microsoft\Edge\Application\msedge.exe"
+        self.assertEqual(find_browser("auto", self.ENV, self.found(chrome, edge)), chrome)
+        self.assertEqual(find_browser("auto", self.ENV, self.found(edge)), edge)
+        self.assertEqual(find_browser("edge", self.ENV, self.found(chrome, edge)), edge)
+        local = r"C:\Users\me\AppData\Local\Google\Chrome\Application\chrome.exe"
+        self.assertEqual(find_browser("chrome", self.ENV, self.found(local)), local)
+
+    def test_explicit_path_and_helpful_errors(self):
+        custom = r"D:\Browsers\brave.exe"
+        self.assertEqual(find_browser(f'"{custom}"', self.ENV, self.found(custom)), custom)
+        with self.assertRaisesRegex(FileNotFoundError, "does not exist"):
+            find_browser(custom, self.ENV, self.found())
+        with self.assertRaisesRegex(FileNotFoundError, "XBOX_AGENT_BROWSER"):
+            find_browser("auto", self.ENV, self.found())
+
+    def test_command_opens_a_new_window_and_only_for_http_urls(self):
+        url = "https://www.xbox.com/de-DE/play/consoles"
+        self.assertEqual(new_window_command("chrome.exe", url), ["chrome.exe", "--new-window", url])
+        for bad in ("file:///C:/secret.txt", "javascript:alert(1)", "--remote-debugging-port=1", "xbox.com"):
+            with self.assertRaises(ValueError, msg=bad):
+                new_window_command("chrome.exe", bad)
+
+    def test_the_dashboard_window_is_never_mistaken_for_the_xbox_window(self):
+        exclude = Settings().window_exclude
+        self.assertFalse(title_matches("لوحة XboxAgent - Google Chrome", "Xbox", exclude))
+        self.assertFalse(title_matches("XboxAgent dashboard", "xbox", exclude))
+        self.assertTrue(title_matches("Konsolen - Xbox Cloud Gaming - Google Chrome", "Xbox", exclude))
+        self.assertFalse(title_matches("Notepad", "Xbox", exclude))
+
+    def test_defaults_and_env_overrides(self):
+        cfg = Settings()
+        self.assertEqual(cfg.play_url, "https://www.xbox.com/de-DE/play/consoles")
+        self.assertTrue(cfg.open_play_url)
+        env = {"XBOX_AGENT_PLAY_URL": "https://www.xbox.com/en-US/play/consoles", "XBOX_AGENT_OPEN_PLAY_URL": "0",
+               "XBOX_AGENT_BROWSER": "edge", "XBOX_AGENT_WINDOW_EXCLUDE": "XboxAgent, Dashboard",
+               "XBOX_AGENT_CONSOLE_LABELS": "connect"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            cfg = Settings.from_env()
+        self.assertEqual((cfg.play_url, cfg.open_play_url, cfg.browser), (env["XBOX_AGENT_PLAY_URL"], False, "edge"))
+        self.assertEqual((cfg.window_exclude, cfg.console_labels), (("XboxAgent", "Dashboard"), ("connect",)))
 
 
 class StartupFailures(unittest.TestCase):

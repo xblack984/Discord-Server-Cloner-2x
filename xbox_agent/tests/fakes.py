@@ -18,6 +18,7 @@ SCREEN = {
     "game_loading": "game_loading", "game_main_menu": "game_main_menu", "settings": "settings",
     "account_menu": "settings", "accounts": "accounts", "confirm_remove": "confirm_dialog",
     "quit_confirm": "confirm_dialog", "password_prompt": "password_prompt",
+    "play_consoles": "play_consoles", "connecting": "unknown", "web_sign_in": "web_sign_in", "error_page": "error",
 }
 RESULT_TEXT = {
     "redeemed": "Successfully redeemed! Enjoy your game",
@@ -36,6 +37,8 @@ class FakeConsole:
         self.signed_in = False
         self.game_running = False
         self.loading_snaps = 0
+        self.connecting_snaps = 0
+        self.connect_stuck = False  # pressing "Verbinden" never leads to a console screen
         self.accounts = ["AgentTest99", "OtherUser"]
         self.pending_account: str | None = None
         self.outcomes: dict[str, str] = {}  # normalized code -> outcome kind
@@ -53,6 +56,7 @@ class FakeConsole:
         s = self.scene
         table: dict[str, list[str]] = {
             "sign_in_prompt": ["Sign in", "Sign in on another device"],
+            "play_consoles": ["Meine Konsole", "Verbinden"],
             "home": ["My games & apps", "Store"],
             "store": ["Games", "Redeem a code"],
             "library": ["Call of Duty: Modern Warfare II", "Call of Duty: Modern Warfare", "Forza Horizon"],
@@ -106,6 +110,9 @@ class FakeConsole:
             ("profile_menu", "Settings"): "settings", ("settings", "Account"): "account_menu",
             ("account_menu", "Remove accounts"): "accounts",
         }.get((s, label))
+        if s == "play_consoles" and label == "Verbinden":
+            self.connecting_snaps = 0
+            return self._go("play_consoles" if self.connect_stuck else "connecting")
         if s == "game_page" and label == "Play":
             self.game_running, self.loading_snaps = True, 0
             return self._go("game_loading")
@@ -134,6 +141,10 @@ class FakeConsole:
             self.loading_snaps += 1
             if self.loading_snaps > 2:
                 self.scene = "game_main_menu"
+        if self.scene == "connecting":
+            self.connecting_snaps += 1
+            if self.connecting_snaps > 2:
+                self.scene = "sign_in_prompt"
         s = self.scene
         if s == "login_code":
             ocr = self.login_text
@@ -176,9 +187,16 @@ class FakeWindow:
     def __init__(self, console: FakeConsole, clipboard: FakeClipboard):
         self.console, self.clipboard = console, clipboard
         self.focusable, self.reloads, self.pastes = True, 0, 0
+        self.opened: list[str] = []
 
     def focus(self) -> bool:
         return self.focusable
+
+    def ensure_open(self, url: str) -> bool:
+        if self.opened:  # the window already exists after the first call
+            return False
+        self.opened.append(url)
+        return True
 
     def is_foreground(self) -> bool:
         return self.focusable

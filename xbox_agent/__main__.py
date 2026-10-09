@@ -22,9 +22,9 @@ def build_tools(cfg: Settings) -> Tools:
     from .tools.dashboard import HttpDashboard
     from .tools.store import SqliteStore
     from .tools.vision import build_vision
-    from .tools.windows_input import VGamepad, Win32Window
+    from .tools.windows_input import VGamepad, window_from_settings
 
-    window = Win32Window(cfg.window_title, cfg.crop_top_px)
+    window = window_from_settings(cfg)
     return Tools(
         gamepad=VGamepad(),
         window=window,
@@ -66,10 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.inspect:
         from .tools.capture import MssCapture, TesseractOcr
         from .tools.vision import build_vision
-        from .tools.windows_input import Win32Window
+        from .tools.windows_input import window_from_settings
 
         try:
-            window = Win32Window(cfg.window_title, cfg.crop_top_px)
+            window = window_from_settings(cfg)
             report = inspect_screen(window, MssCapture(window), TesseractOcr(cfg.tesseract_cmd), build_vision(cfg))
         except Exception as e:
             return fail(e)

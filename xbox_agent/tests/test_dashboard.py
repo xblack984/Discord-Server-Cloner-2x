@@ -70,6 +70,8 @@ class DashboardApi(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("script-src 'self'", r.headers["content-security-policy"])
         self.assertNotIn("<script>", r.text)
+        title = r.text.split("<title>")[1].split("</title>")[0]
+        self.assertNotIn("xbox", title.lower())  # the agent looks for a window titled "Xbox"
         self.assertEqual(self.client.get("/static/app.js").status_code, 200)
         self.assertNotIn("innerHTML", self.client.get("/static/app.js").text)
 

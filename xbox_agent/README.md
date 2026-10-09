@@ -25,6 +25,8 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | لا حذف بروفايل بدون تأكيد صريح | يُصدر الوكيل توكنًا لمرة واحدة ويرسله مع الـ gamertag. الحذف لا يتم إلا بأمر `confirm_delete_profile` يحمل نفس التوكن. توكن خاطئ يُتجاهل، و`deny_delete_profile` أو انتهاء المهلة يعني لا حذف. عند الحذف يُختار حساب مطابق تمامًا للـ gamertag، ويُتحقق من نص نافذة التأكيد قبل الضغط. |
 | Redeem الرسمي فقط | عبر شاشة Redeem داخل الكونسول. لا يشتري الوكيل ولا يثبّت لعبة أبدًا (يتوقف عند زر Install/Buy). |
 | عند الشك: توقف + صورة + تقرير + انتظار | أي استثناء غير متوقع يتحول إلى `Escalation`: لقطة + نص OCR + تصنيف (`network/auth/code_invalid/code_used/game_stuck/stream_lost/unknown`) إلى الـ Dashboard، ثم انتظار `retry` / `skip` / `abort_session`. |
+| لا يلتبس بنافذة أخرى | يفتح الوكيل نافذة متصفح جديدة بنفسه ويثبّت عليها بمقبض النافذة (لا بالعنوان). عند إعادة استخدام نافذة موجودة يقبل نوافذ Chrome/Edge فقط، ويستبعد أي عنوان فيه `XboxAgent` (نافذة اللوحة)، فلا تلتقط تطبيق Xbox لـ Windows ولا اللوحة. |
+| صفحة تسجيل دخول Microsoft في المتصفح | تُصنَّف `web_sign_in` فيتوقف الوكيل ويصعّد (auth) ولا يكتب شيئًا؛ تسجّل أنت مرة واحدة في تلك النافذة. |
 | النافذة نشطة قبل كل إجراء | `SetForegroundWindow` قبل كل ضغط وكل لقطة. إن فشل التفعيل لا يُرسل أي إدخال. |
 | صورة سوداء/متجمدة | إطار شبه أسود، أو 4 إطارات متطابقة أثناء التنقل، يعني `stream_lost`: يعيد الوكيل تحميل الصفحة (F5) حتى 3 مرات ثم يصعّد للمشرف. |
 
@@ -51,7 +53,11 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` | حسب المزوّد (Claude يقبل أيضًا `ant auth login`) |
 | `XBOX_AGENT_DEEPSEEK_MODEL` / `_BASE_URL` / `_THINKING` | `deepseek-flash` / `https://api.deepseek.com` / `off` |
 | `XBOX_AGENT_CLAUDE_MODEL` / `_EFFORT` / `_FALLBACKS` | `claude-opus-5-5` / `low` / `1` |
-| `XBOX_AGENT_WINDOW_TITLE` | `Xbox` (جزء من عنوان نافذة المتصفح) |
+| `XBOX_AGENT_PLAY_URL` | `https://www.xbox.com/de-DE/play/consoles`، الصفحة التي يفتحها الوكيل بنفسه |
+| `XBOX_AGENT_OPEN_PLAY_URL` | `1`؛ ضع `0` لاستخدام نافذة فتحتها بنفسك |
+| `XBOX_AGENT_BROWSER` | `auto` (Chrome ثم Edge) أو `chrome` أو `edge` أو المسار الكامل |
+| `XBOX_AGENT_CONSOLE_LABELS` | `verbinden,connect`؛ نص زر الاتصال في الصفحة |
+| `XBOX_AGENT_WINDOW_TITLE` / `_WINDOW_EXCLUDE` | `Xbox` / `XboxAgent`؛ لإعادة استخدام نافذة مفتوحة، مع استبعاد نافذة اللوحة |
 | `TESSERACT_CMD` | مسار `tesseract.exe` إن لم يكن في PATH |
 | `XBOX_AGENT_ALLOW_DELETE` | `0`؛ حذف البروفايل معطّل حتى تضع `1` (ويبقى تأكيد الداشبورد مطلوبًا) |
 | `XBOX_AGENT_PAUSE_ON_CODE_ERROR` | `0`؛ ضعه `1` ليتوقف عند كل كود خاطئ/مستخدم بدل المتابعة |

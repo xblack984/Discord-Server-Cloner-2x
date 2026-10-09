@@ -66,13 +66,19 @@ def default_checks(cfg: Settings) -> list[Check]:
         return f"Tesseract {pytesseract.get_tesseract_version()}"
 
     def window() -> str:
-        from .tools.windows_input import Win32Window
+        from .tools.windows_input import window_from_settings
 
-        w = Win32Window(cfg.window_title, cfg.crop_top_px)
+        w = window_from_settings(cfg)
+        opened = False
+        if cfg.open_play_url and cfg.play_url:
+            opened = w.ensure_open(cfg.play_url)  # opens the page in a new window, as the agent will
+            if opened:
+                time.sleep(cfg.page_load_s)
         if not w.focus():
             raise RuntimeError(f"no visible window whose title contains '{cfg.window_title}'")
         shared["window"] = w
-        return f"focused; capture region (left, top, w, h) = {w.client_region()}"
+        how = f"opened {cfg.play_url} in a new window and focused it" if opened else "focused an existing window"
+        return f"{how}; capture region (left, top, w, h) = {w.client_region()}"
 
     def capture() -> str:
         from .tools.capture import MssCapture

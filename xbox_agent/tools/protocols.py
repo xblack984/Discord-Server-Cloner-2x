@@ -16,6 +16,10 @@ class BrowserWindow(Protocol):
     def focus(self) -> bool:
         """Bring the Remote Play window to the foreground; True only if it is now foreground."""
 
+    def ensure_open(self, url: str) -> bool:
+        """Open `url` in a new browser window unless the Remote Play window already exists.
+        True if a window was opened (the page then needs time to load)."""
+
     def is_foreground(self) -> bool: ...
     def reload(self) -> None: ...
     def paste(self) -> None:
