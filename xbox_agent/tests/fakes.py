@@ -44,6 +44,11 @@ class FakeConsole:
         self.web_login_after: int | None = None  # the human signs in after this many looks at the sign-in page
         self.web_login_looks = 0
         self.connect_stuck = False  # pressing "Verbinden" never leads to a console screen
+        self.web_ignores_pad = False  # the consoles web page does not react to the gamepad at all
+        self.manual_connect_after: int | None = None  # the human clicks Connect after this many looks at the page
+        self.manual_connect_looks = 0
+        self.error_snaps = 0
+        self.error_looks = 0  # the error page clears by itself once it has been looked at this many times (0 = never)
         self.accounts = ["AgentTest99", "OtherUser"]
         self.pending_account: str | None = None
         self.outcomes: dict[str, str] = {}  # normalized code -> outcome kind
@@ -86,6 +91,8 @@ class FakeConsole:
 
     def press(self, b: Button) -> None:
         s = self.scene
+        if s == "play_consoles" and self.web_ignores_pad:
+            return
         if b is Button.GUIDE:
             return self._go({"game_signed_out": "guide_signed_out", "game_signed_in": "guide_signed_in",
                              "game_quit_ok": "guide_with_quit"}.get(s, "guide_menu"))
@@ -157,6 +164,14 @@ class FakeConsole:
             self.web_login_looks += 1
             if self.web_login_looks > self.web_login_after:
                 self.scene = "sign_in_prompt"
+        if self.scene == "play_consoles" and self.manual_connect_after is not None:
+            self.manual_connect_looks += 1
+            if self.manual_connect_looks > self.manual_connect_after:
+                self.scene = "connecting"
+        if self.scene == "error_page" and self.error_looks:
+            self.error_snaps += 1
+            if self.error_snaps > self.error_looks:
+                self.scene = "play_consoles"
         if self.scene == "connecting":
             self.connecting_snaps += 1
             if self.connecting_snaps > 2:

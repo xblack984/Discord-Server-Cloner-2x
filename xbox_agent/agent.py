@@ -499,16 +499,32 @@ class XboxAgent:
         errors = 0
         while True:
             frame = self._snap()
-            screen = self._classify(frame, allow=frozenset({"web_sign_in"}))  # other credential screens raise
+            screen = self._classify(frame, allow=frozenset({"web_sign_in"}), retries=self.cfg.second_looks)
             if screen == "web_sign_in":
                 self._wait_for_web_login(ctx, frame)
                 deadline = self.clock() + self.cfg.connect_timeout_s  # the connect clock starts after you signed in
                 continue
             errors = errors + 1 if screen == "error" else 0
-            if errors >= 2:
-                raise Escalation(ErrorCategory.UNKNOWN, "the page keeps showing an error instead of the console")
+            if errors >= 3:
+                raise Escalation(ErrorCategory.UNKNOWN, "the page keeps showing an error instead of the console "
+                                 "(reloaded twice); check the internet, then press retry")
+            if screen == "error":  # a web error page usually goes away with a reload
+                self._emit(ctx, State.START_SESSION, "reload_page", frame=frame,
+                           message="the page shows an error; reloading it")
+                self.t.window.reload()
+                self.sleep(self.cfg.reload_wait_s)
+                continue
             if screen == "play_consoles" and not pressed:
-                self.nav.select(label_matcher(*self.cfg.console_labels), "the connect button of the console")
+                try:
+                    self.nav.select(label_matcher(*self.cfg.console_labels), "the connect button of the console")
+                except Escalation as esc:
+                    if esc.category is ErrorCategory.STREAM_LOST and "black" in esc.message:
+                        raise
+                    # A web page may ignore the gamepad, or call the button something else: ask for one click.
+                    self._wait_for_manual_connect(ctx, frame, esc.message)
+                    pressed = True
+                    deadline = self.clock() + self.cfg.connect_timeout_s
+                    continue
                 pressed = True
                 self._emit(ctx, State.START_SESSION, "connecting", frame=frame,
                            message="pressed connect on the consoles page")
@@ -648,29 +664,48 @@ class XboxAgent:
                 raise Escalation(ErrorCategory.AUTH, "admin confirmed sign-in but the console shows no signed-in user")
             self.sleep(self.cfg.settle_s * 2)
 
-    def _wait_for_web_login(self, ctx: Session, frame: Frame) -> None:
-        """The browser shows a Microsoft sign-in page: the human signs in, the agent only watches.
-        While waiting it sends no key and does not even focus the window (the human is typing in it),
-        and it asks the vision model again only when the picture actually changed."""
-        note = ("Sign in to your Microsoft account in the browser window. The agent never types credentials "
-                "and continues by itself once you are signed in.")
-        self._post("notice", {"session_id": ctx.id, "message": note}, frame.png)
-        self._emit(ctx, State.START_SESSION, "wait_web_login", need_confirmation=True, message=note,
-                   next_expected_event="you sign in; the agent continues by itself", frame=frame, send_image=False)
-        deadline = self.clock() + self.cfg.web_login_timeout_s
+    def _watch_until(self, frame: Frame, leaves: Callable[[str], bool], timeout_s: float) -> bool:
+        """Wait for a human to act in the browser: no key, no focus (they are using the window), and the vision
+        model is asked again only when the picture actually changed. True once `leaves(screen)` holds."""
+        deadline = self.clock() + timeout_s
         last = frame.digest
         while True:
             self.sleep(self.cfg.poll_interval_s)
             current = self.t.capture.grab()  # deliberately not _snap(): no focus, no Alt tap
             if current.mean_luma >= BLACK_LUMA and current.digest != last:
                 last = current.digest
-                if self._classify(current, allow=frozenset({"web_sign_in"})) != "web_sign_in":
-                    self._post("notice", {"session_id": ctx.id, "message": ""})
-                    self._emit(ctx, State.START_SESSION, "web_login_done", message="signed in to the browser")
-                    return
+                if leaves(self._classify(current, allow=frozenset({"web_sign_in"}))):
+                    return True
             if self.clock() >= deadline:
-                self._post("notice", {"session_id": ctx.id, "message": ""})
-                raise Escalation(ErrorCategory.AUTH, "the Microsoft sign-in in the browser was not completed in time")
+                return False
+
+    def _wait_for_web_login(self, ctx: Session, frame: Frame) -> None:
+        """The browser shows a Microsoft sign-in page: the human signs in, the agent only watches."""
+        note = ("Sign in to your Microsoft account in the browser window. The agent never types credentials "
+                "and continues by itself once you are signed in.")
+        self._post("notice", {"session_id": ctx.id, "message": note}, frame.png)
+        self._emit(ctx, State.START_SESSION, "wait_web_login", need_confirmation=True, message=note,
+                   next_expected_event="you sign in; the agent continues by itself", frame=frame, send_image=False)
+        done = self._watch_until(frame, lambda screen: screen != "web_sign_in", self.cfg.web_login_timeout_s)
+        self._post("notice", {"session_id": ctx.id, "message": ""})
+        if not done:
+            raise Escalation(ErrorCategory.AUTH, "the Microsoft sign-in in the browser was not completed in time")
+        self._emit(ctx, State.START_SESSION, "web_login_done", message="signed in to the browser")
+
+    def _wait_for_manual_connect(self, ctx: Session, frame: Frame, reason: str) -> None:
+        """The connect button could not be pressed with the gamepad: the human clicks it, the agent watches."""
+        note = ("I could not press Connect (Verbinden) on the consoles page myself. Click it for your console in the "
+                "browser window and I continue by myself once the console screen appears. To skip this step, set "
+                "XBOX_AGENT_PLAY_URL to your console's launch link (see TRIAL.md).")
+        self._post("notice", {"session_id": ctx.id, "message": note}, frame.png)
+        self._emit(ctx, State.START_SESSION, "wait_manual_connect", params={"reason": reason}, need_confirmation=True,
+                   message=note, next_expected_event="you click Connect; the agent continues by itself",
+                   frame=frame, send_image=False)
+        done = self._watch_until(frame, lambda screen: screen != "play_consoles", self.cfg.web_login_timeout_s)
+        self._post("notice", {"session_id": ctx.id, "message": ""})
+        if not done:
+            raise Escalation(ErrorCategory.UNKNOWN, "Connect was not pressed on the consoles page in time")
+        self._emit(ctx, State.START_SESSION, "manual_connect_done", message="the console page was left")
 
     # -- redeem
 

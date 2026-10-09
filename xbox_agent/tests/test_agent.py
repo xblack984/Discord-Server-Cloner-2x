@@ -615,13 +615,51 @@ class OpenPlayPage(RigTestCase):
         self.assertEqual((err["category"], err["state"]), ("network", "START_SESSION"))
         self.assertEqual(rig.gamepad.taps.count(Button.A), 1)  # it pressed connect once, not repeatedly
 
-    def test_a_page_that_keeps_showing_an_error_escalates_quickly(self):
+    def test_a_page_that_keeps_showing_an_error_is_reloaded_twice_then_escalates(self):
         rig = self.run_until_login(scene="error_page")
         err = rig.dash.of("error")[0]
         self.assertEqual(err["category"], "unknown")
         self.assertIn("error", err["message"])
         self.assertEqual(rig.gamepad.taps, [])
-        self.assertLess(rig.time.now, 30)  # did not sit out the whole connect timeout
+        self.assertEqual(rig.window.reloads, 2)
+        self.assertLess(rig.time.now, 60)  # did not sit out the whole connect timeout
+
+    def test_an_error_page_that_clears_after_a_reload_is_not_an_escalation(self):
+        rig = self.make_rig(scene="error_page")
+        rig.console.error_looks = 1  # the page is fine again after the first reload
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("error"), [])
+        self.assertGreaterEqual(rig.window.reloads, 1)
+        self.assertIn("reload_page", self.actions(rig))
+        self.assertIn("stream_ok", self.actions(rig))
+
+    def test_when_the_page_ignores_the_gamepad_it_asks_you_to_click_connect_and_continues(self):
+        rig = self.make_rig(scene="play_consoles")
+        rig.console.web_ignores_pad = True
+        rig.console.manual_connect_after = 4
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("error"), [])  # no retry button needed
+        acts = self.actions(rig)
+        self.assertLess(acts.index("wait_manual_connect"), acts.index("manual_connect_done"))
+        self.assertIn("stream_ok", acts)
+        notes = [n["message"] for n in rig.dash.of("notice")]
+        self.assertEqual((bool(notes[0]), notes[-1]), (True, ""))
+        self.assertIn("XBOX_AGENT_PLAY_URL", notes[0])
+
+    def test_nobody_clicking_connect_ends_in_an_escalation_after_the_wait(self):
+        rig = self.make_rig(scene="play_consoles", web_login_timeout_s=30)
+        rig.console.web_ignores_pad = True
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        err = rig.dash.of("error")[0]
+        self.assertEqual((err["category"], err["state"]), ("unknown", "START_SESSION"))
+        self.assertGreaterEqual(rig.time.now, 30)
+        self.assertEqual(rig.dash.of("notice")[-1]["message"], "")
 
 
 class DeleteDisabled(RigTestCase):
