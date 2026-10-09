@@ -79,4 +79,5 @@ xbox_agent\scripts\run_agent.bat --inspect
 | «ambiguous …» أو «not found in menu» | اسم العنصر مختلف؛ استخدم `--inspect` وعدّل الإعداد. |
 | «pasted text … not visible» | النافذة فقدت التركيز أو حقل الإدخال غير محدد. الوكيل لم يضغط A. |
 | «browser window could not be brought to the foreground» | Windows منع التركيز؛ انقر النافذة يدويًا مرة ثم أعد المحاولة. |
+| النافذة تُفتح وتُغلق فورًا | فُكّ الضغط أولًا (لا تشغّل من داخل الـ zip). الملفات الآن تبقى مفتوحة وتطبع السبب؛ إن لم تظهر رسالة افتح `cmd` واكتب `cd` إلى المجلد ثم شغّل الملف من هناك. |
 | بطء أو كلفة عالية | جرّب `XBOX_AGENT_CLAUDE_MODEL=claude-haiku-5-5` وقارن الدقة. |

@@ -15,7 +15,8 @@ def main() -> int:
     admin_token = os.environ.get("DASHBOARD_ADMIN_TOKEN", "")
     missing = [n for n, v in (("XBOX_AGENT_DASHBOARD_TOKEN", agent_token), ("DASHBOARD_ADMIN_TOKEN", admin_token)) if not v]
     if missing:
-        print(f"Missing {', '.join(missing)} ({HINT}).", file=sys.stderr)
+        print(f"Missing {', '.join(missing)}.\nOpen xbox_agent\\.env in Notepad and fill them in "
+              f"(two different secrets; {HINT}).", file=sys.stderr)
         return 2
     if agent_token == admin_token:
         print("XBOX_AGENT_DASHBOARD_TOKEN and DASHBOARD_ADMIN_TOKEN must be different.", file=sys.stderr)

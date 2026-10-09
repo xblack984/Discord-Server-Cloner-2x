@@ -37,6 +37,14 @@ def build_tools(cfg: Settings) -> Tools:
     )
 
 
+def fail(error: Exception) -> int:
+    """Startup problems (missing driver, key, window...) in plain words; --check pinpoints the component."""
+    logging.getLogger("xbox_agent").debug("startup failure", exc_info=error)
+    print(f"Could not start: {type(error).__name__}: {error}\n"
+          "Run it with --check (run_agent.bat --check) to test each component separately.", file=sys.stderr)
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="xbox_agent")
     parser.add_argument("--once", action="store_true", help="handle a single session, then exit")
@@ -60,12 +68,19 @@ def main(argv: list[str] | None = None) -> int:
         from .tools.vision import build_vision
         from .tools.windows_input import Win32Window
 
-        window = Win32Window(cfg.window_title, cfg.crop_top_px)
-        report = inspect_screen(window, MssCapture(window), TesseractOcr(cfg.tesseract_cmd), build_vision(cfg))
+        try:
+            window = Win32Window(cfg.window_title, cfg.crop_top_px)
+            report = inspect_screen(window, MssCapture(window), TesseractOcr(cfg.tesseract_cmd), build_vision(cfg))
+        except Exception as e:
+            return fail(e)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
-    agent = XboxAgent(build_tools(cfg), cfg)
+    try:
+        tools = build_tools(cfg)
+    except Exception as e:
+        return fail(e)
+    agent = XboxAgent(tools, cfg)
     try:
         agent.run_once() if args.once else agent.run_forever()
     except KeyboardInterrupt:
