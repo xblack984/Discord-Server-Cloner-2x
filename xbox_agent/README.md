@@ -26,7 +26,7 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | Redeem الرسمي فقط | عبر شاشة Redeem داخل الكونسول. لا يشتري الوكيل ولا يثبّت لعبة أبدًا (يتوقف عند زر Install/Buy). |
 | عند الشك: توقف + صورة + تقرير + انتظار | أي استثناء غير متوقع يتحول إلى `Escalation`: لقطة + نص OCR + تصنيف (`network/auth/code_invalid/code_used/game_stuck/stream_lost/unknown`) إلى الـ Dashboard، ثم انتظار `retry` / `skip` / `abort_session`. |
 | لا يلتبس بنافذة أخرى | يفتح الوكيل نافذة متصفح جديدة بنفسه ويثبّت عليها بمقبض النافذة (لا بالعنوان). عند إعادة استخدام نافذة موجودة يقبل نوافذ Chrome/Edge فقط، ويستبعد أي عنوان فيه `XboxAgent` (نافذة اللوحة)، فلا تلتقط تطبيق Xbox لـ Windows ولا اللوحة. |
-| صفحة تسجيل دخول Microsoft في المتصفح | تُصنَّف `web_sign_in` فيتوقف الوكيل ويصعّد (auth) ولا يكتب شيئًا؛ تسجّل أنت مرة واحدة في تلك النافذة. |
+| صفحة تسجيل دخول Microsoft في المتصفح | تُصنَّف `web_sign_in`: ينتظر الوكيل ولا يكتب شيئًا (تظهر بطاقة «بانتظارك» في اللوحة)، وتسجّل أنت في نافذة المتصفح فيكمل وحده. أثناء الانتظار لا يرسل أي مفتاح ولا ينقل التركيز، ولا يسأل نموذج الرؤية إلا إذا تغيّرت الصورة. بعد المهلة يصعّد (auth). وللمرة الأولى: `run_agent.bat --login` يفتح Chrome لتسجّل دخولك دون بدء جلسة. |
 | النافذة نشطة قبل كل إجراء | `SetForegroundWindow` قبل كل ضغط وكل لقطة. إن فشل التفعيل لا يُرسل أي إدخال. |
 | صورة سوداء/متجمدة | إطار شبه أسود، أو 4 إطارات متطابقة أثناء التنقل، يعني `stream_lost`: يعيد الوكيل تحميل الصفحة (F5) حتى 3 مرات ثم يصعّد للمشرف. |
 
@@ -55,7 +55,8 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | `XBOX_AGENT_CLAUDE_MODEL` / `_EFFORT` / `_FALLBACKS` | `claude-opus-5-5` / `low` / `1` |
 | `XBOX_AGENT_PLAY_URL` | `https://www.xbox.com/de-DE/play/consoles`، الصفحة التي يفتحها الوكيل بنفسه |
 | `XBOX_AGENT_OPEN_PLAY_URL` | `1`؛ ضع `0` لاستخدام نافذة فتحتها بنفسك |
-| `XBOX_AGENT_BROWSER` | `auto` (Chrome ثم Edge) أو `chrome` أو `edge` أو المسار الكامل |
+| `XBOX_AGENT_BROWSER` / `_BROWSER_PROFILE` | `auto` (Chrome ثم Edge) أو `chrome` أو `edge` أو المسار الكامل / ملف Chrome الشخصي الذي سجّلت به (`Default`, `Profile 1`) |
+| `XBOX_AGENT_WEB_LOGIN_TIMEOUT_S` | `600`؛ مدة انتظار الوكيل لتسجّل أنت دخولك في المتصفح |
 | `XBOX_AGENT_CONSOLE_LABELS` | `verbinden,connect`؛ نص زر الاتصال في الصفحة |
 | `XBOX_AGENT_WINDOW_TITLE` / `_WINDOW_EXCLUDE` | `Xbox` / `XboxAgent`؛ لإعادة استخدام نافذة مفتوحة، مع استبعاد نافذة اللوحة |
 | `TESSERACT_CMD` | مسار `tesseract.exe` إن لم يكن في PATH |
@@ -66,7 +67,8 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 | `XBOX_AGENT_DB`, `XBOX_AGENT_SHOTS_DIR` | `xbox_agent.sqlite3`, `shots` |
 
 أوضاع التشغيل: `python -m xbox_agent` (حلقة دائمة)، `--once` (جلسة واحدة)، `--check` (يفحص كل مكوّن ويجري استدعاء رؤية واحدًا)،
-`--inspect` (يعرض ما يقرؤه OCR والنموذج على الشاشة الحالية). الوضعان الأخيران لا يضغطان أي زر.
+`--inspect` (يعرض ما يقرؤه OCR والنموذج على الشاشة الحالية)، `--login` (يفتح Chrome على صفحة Xbox لتسجّل دخولك بنفسك ثم ينتهي).
+الأوضاع الثلاثة الأخيرة لا تضغط أي زر ولا تكتب شيئًا.
 
 ## مزوّد الرؤية (Vision)
 

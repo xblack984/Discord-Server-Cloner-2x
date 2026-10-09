@@ -62,6 +62,10 @@ function render(st) {
     ...(s ? [chip(`الجلسة ${s.id}`), chip(s.state), chip(s.status)] : []));
 
   show($("#card-start"), !active);
+  const notice = active ? s.notice : null;
+  show($("#card-notice"), Boolean(notice));
+  if (notice) { $("#notice-text").textContent = notice.message; showShot($("#notice-shot"), notice.shot); }
+
   show($("#card-login"), active && Boolean(s.login_code));
   if (active && s.login_code) { $("#login-code").textContent = s.login_code; showShot($("#login-shot"), s.login_shot); }
 

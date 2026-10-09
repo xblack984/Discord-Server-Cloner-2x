@@ -19,7 +19,7 @@ from ..models import display_code, normalize_code
 
 MAX_CODES = 50
 AGENT_ONLINE_WITHIN_S = 20
-EVENT_KINDS = {"step", "login_code", "redeem_result", "error", "game_ready",
+EVENT_KINDS = {"step", "login_code", "redeem_result", "error", "game_ready", "notice",
                "delete_profile_request", "session_report"}
 ADMIN_COMMANDS = {"admin_login_confirmed", "close_game", "retry", "skip", "abort_session",
                   "deny_delete_profile"}
@@ -46,6 +46,7 @@ class Session:
     game_ready: bool = False
     delete_request: dict[str, Any] | None = None  # {gamertag, token}; token stays server-side
     error: dict[str, Any] | None = None
+    notice: dict[str, Any] | None = None  # "waiting for you" (e.g. sign in to Microsoft in the browser)
     report: dict[str, Any] | None = None
 
 
@@ -129,13 +130,16 @@ class DashboardState:
             s.error = {"category": str(payload.get("category"))[:30], "message": str(payload.get("message"))[:500],
                        "ocr_text": str(payload.get("ocr_text") or "")[:2000], "state": str(payload.get("state"))[:40],
                        "can_skip": bool(payload.get("can_skip")), "shot": shot, "ts": self.clock()}
+        elif kind == "notice":
+            text = str(payload.get("message") or "")[:400]
+            s.notice = {"message": text, "shot": shot} if text else None
         elif kind == "game_ready":
             s.game_ready = True
         elif kind == "delete_profile_request":
             tag, token = str(payload.get("gamertag") or ""), str(payload.get("confirm_token") or "")
             s.delete_request = {"gamertag": tag[:60], "token": token} if tag and token else None
         elif kind == "session_report":
-            s.report, s.status = payload, "ended"
+            s.report, s.status, s.notice = payload, "ended", None
 
     # ---------------------------------------------------------------- admin side
 
@@ -201,7 +205,7 @@ class DashboardState:
                 raise Refused(409, "this error cannot be skipped")
             s.error = None
         elif type_ == "abort_session":
-            s.error = None
+            s.error = s.notice = None
         elif type_ == "deny_delete_profile":
             if not s.delete_request:
                 raise Refused(409, "no profile deletion was requested")
@@ -236,7 +240,7 @@ class DashboardState:
                 "id": s.id, "state": s.state, "status": s.status, "codes": s.codes,
                 "login_code": s.login_code, "login_shot": s.login_shot, "game_ready": s.game_ready,
                 "delete_request": None if not s.delete_request else {"gamertag": s.delete_request["gamertag"]},
-                "error": s.error, "report": s.report},
+                "error": s.error, "notice": s.notice, "report": s.report},
             "commands": [{"id": c["id"], "type": c["type"], "status": c["status"], "ts": c["ts"]}
                          for c in self.commands[-15:]],
             "events": list(self.events)[-120:],

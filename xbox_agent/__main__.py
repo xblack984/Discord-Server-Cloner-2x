@@ -1,7 +1,7 @@
-"""python -m xbox_agent [--once] [--check] [--inspect]
+"""python -m xbox_agent [--once] [--check] [--inspect] [--login]
 
 stdout carries only the agent's JSON step reports (one object per line); logs go to stderr.
---check and --inspect never press a button or type anything.
+--check, --inspect and --login never press a button or type anything.
 """
 from __future__ import annotations
 
@@ -49,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="xbox_agent")
     parser.add_argument("--once", action="store_true", help="handle a single session, then exit")
     parser.add_argument("--check", action="store_true", help="test every component (incl. one vision call) and exit")
+    parser.add_argument("--login", action="store_true",
+                        help="open the Xbox page in a new browser window so you can sign in yourself, then exit")
     parser.add_argument("--inspect", action="store_true",
                         help="print what OCR and the vision model see on the current screen, then exit")
     args = parser.parse_args(argv)
@@ -62,6 +64,21 @@ def main(argv: list[str] | None = None) -> int:
         results = run_checks(default_checks(cfg))
         print(format_results(results), file=sys.stderr)
         return 0 if all(r.ok for r in results) else 1
+
+    if args.login:
+        from .tools.windows_input import window_from_settings
+
+        try:
+            window = window_from_settings(cfg)
+            opened = window.ensure_open(cfg.play_url)
+        except Exception as e:
+            return fail(e)
+        print((f"Opened {cfg.play_url} in {getattr(window, 'browser_path', '') or 'the browser'}.\n"
+               if opened else "An Xbox browser window is already open; use it.\n")
+              + "Sign in to the Microsoft account there yourself (the agent never types credentials), "
+                "until you see your console. Then close nothing and start sessions from the dashboard; "
+                "the browser remembers the sign-in.", file=sys.stderr)
+        return 0
 
     if args.inspect:
         from .tools.capture import MssCapture, TesseractOcr

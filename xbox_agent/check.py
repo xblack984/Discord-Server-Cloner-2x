@@ -77,7 +77,8 @@ def default_checks(cfg: Settings) -> list[Check]:
         if not w.focus():
             raise RuntimeError(f"no visible window whose title contains '{cfg.window_title}'")
         shared["window"] = w
-        how = f"opened {cfg.play_url} in a new window and focused it" if opened else "focused an existing window"
+        exe = getattr(w, "browser_path", "")
+        how = f"opened {cfg.play_url} in a new window of {exe} and focused it" if opened else "focused an existing window"
         return f"{how}; capture region (left, top, w, h) = {w.client_region()}"
 
     def capture() -> str:

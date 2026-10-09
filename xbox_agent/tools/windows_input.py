@@ -23,7 +23,7 @@ class Win32Window:
     so no other window (e.g. the dashboard tab) can ever be mistaken for it."""
 
     def __init__(self, title_substring: str, crop_top_px: int = 80, exclude: Sequence[str] = ("XboxAgent",),
-                 browser: str = "auto", open_timeout_s: float = 20.0):
+                 browser: str = "auto", open_timeout_s: float = 20.0, profile: str = ""):
         self._user32 = ctypes.windll.user32  # type: ignore[attr-defined]
         try:  # physical pixels, so mss coordinates line up
             ctypes.windll.shcore.SetProcessDpiAwareness(2)  # type: ignore[attr-defined]
@@ -34,7 +34,9 @@ class Win32Window:
         self._crop = crop_top_px
         self._browser = browser
         self._open_timeout = open_timeout_s
+        self._profile = profile
         self._pinned: int | None = None
+        self.browser_path = ""
 
     def _windows(self) -> list[tuple[int, str, str]]:
         """Visible top-level windows with a title: (hwnd, title, class name)."""
@@ -71,7 +73,8 @@ class Win32Window:
         if self._find() is not None:
             return False
         before = {hwnd for hwnd, _, _ in self._windows()}
-        subprocess.Popen(new_window_command(find_browser(self._browser), url), close_fds=True)
+        self.browser_path = find_browser(self._browser)
+        subprocess.Popen(new_window_command(self.browser_path, url, self._profile), close_fds=True)
         deadline = time.monotonic() + self._open_timeout
         while time.monotonic() < deadline:
             time.sleep(0.4)
@@ -91,6 +94,8 @@ class Win32Window:
             return False
         if self._user32.IsIconic(hwnd):
             self._user32.ShowWindow(hwnd, _SW_RESTORE)
+        if self._user32.GetForegroundWindow() == hwnd:
+            return True  # already in front: send no key at all (the user may be typing in it)
         # A tap on Alt lets SetForegroundWindow succeed from a background process.
         self._user32.keybd_event(_VK_MENU, 0, 0, 0)
         self._user32.keybd_event(_VK_MENU, 0, _KEYUP, 0)
@@ -124,7 +129,8 @@ class Win32Window:
 
 
 def window_from_settings(cfg) -> Win32Window:
-    return Win32Window(cfg.window_title, cfg.crop_top_px, cfg.window_exclude, cfg.browser)
+    return Win32Window(cfg.window_title, cfg.crop_top_px, cfg.window_exclude, cfg.browser,
+                       profile=cfg.browser_profile)
 
 
 class VGamepad:

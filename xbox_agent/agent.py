@@ -220,9 +220,9 @@ class XboxAgent:
             raise Escalation(ErrorCategory.STREAM_LOST, "black frame")
         return frame
 
-    def _classify(self, frame: Frame) -> str:
+    def _classify(self, frame: Frame, *, allow: frozenset[str] = frozenset()) -> str:
         screen = vt.classify_screen(self.t.vision, frame.png)
-        if screen in vt.AUTH_BLOCKING:
+        if screen in vt.AUTH_BLOCKING and screen not in allow:
             raise Escalation(ErrorCategory.AUTH, f"{screen} screen: admin must handle it, agent will not type here")
         return screen
 
@@ -358,7 +358,11 @@ class XboxAgent:
         errors = 0
         while True:
             frame = self._snap()
-            screen = self._classify(frame)  # raises on sign-in / password / OTP / captcha pages
+            screen = self._classify(frame, allow=frozenset({"web_sign_in"}))  # other credential screens raise
+            if screen == "web_sign_in":
+                self._wait_for_web_login(ctx, frame)
+                deadline = self.clock() + self.cfg.connect_timeout_s  # the connect clock starts after you signed in
+                continue
             errors = errors + 1 if screen == "error" else 0
             if errors >= 2:
                 raise Escalation(ErrorCategory.UNKNOWN, "the page keeps showing an error instead of the console")
@@ -437,6 +441,30 @@ class XboxAgent:
             if self.clock() >= deadline:
                 raise Escalation(ErrorCategory.AUTH, "admin confirmed sign-in but the console shows no signed-in user")
             self.sleep(self.cfg.settle_s * 2)
+
+    def _wait_for_web_login(self, ctx: Session, frame: Frame) -> None:
+        """The browser shows a Microsoft sign-in page: the human signs in, the agent only watches.
+        While waiting it sends no key and does not even focus the window (the human is typing in it),
+        and it asks the vision model again only when the picture actually changed."""
+        note = ("Sign in to your Microsoft account in the browser window. The agent never types credentials "
+                "and continues by itself once you are signed in.")
+        self._post("notice", {"session_id": ctx.id, "message": note}, frame.png)
+        self._emit(ctx, State.START_SESSION, "wait_web_login", need_confirmation=True, message=note,
+                   next_expected_event="you sign in; the agent continues by itself", frame=frame, send_image=False)
+        deadline = self.clock() + self.cfg.web_login_timeout_s
+        last = frame.digest
+        while True:
+            self.sleep(self.cfg.poll_interval_s)
+            current = self.t.capture.grab()  # deliberately not _snap(): no focus, no Alt tap
+            if current.mean_luma >= BLACK_LUMA and current.digest != last:
+                last = current.digest
+                if self._classify(current, allow=frozenset({"web_sign_in"})) != "web_sign_in":
+                    self._post("notice", {"session_id": ctx.id, "message": ""})
+                    self._emit(ctx, State.START_SESSION, "web_login_done", message="signed in to the browser")
+                    return
+            if self.clock() >= deadline:
+                self._post("notice", {"session_id": ctx.id, "message": ""})
+                raise Escalation(ErrorCategory.AUTH, "the Microsoft sign-in in the browser was not completed in time")
 
     # -- redeem
 

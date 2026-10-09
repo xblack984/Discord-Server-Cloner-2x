@@ -142,17 +142,29 @@ class BrowserLaunch(unittest.TestCase):
         self.assertTrue(title_matches("Konsolen - Xbox Cloud Gaming - Google Chrome", "Xbox", exclude))
         self.assertFalse(title_matches("Notepad", "Xbox", exclude))
 
+    def test_chrome_profile_option_is_validated(self):
+        url = "https://www.xbox.com/de-DE/play/consoles"
+        self.assertEqual(new_window_command("chrome.exe", url, "Profile 1"),
+                         ["chrome.exe", "--profile-directory=Profile 1", "--new-window", url])
+        self.assertEqual(new_window_command("chrome.exe", url, ""), ["chrome.exe", "--new-window", url])
+        for bad in ("x; calc", "..\\..\\Other", "C:\\Users\\me", "a=b", "p" * 41):
+            with self.assertRaises(ValueError, msg=bad):
+                new_window_command("chrome.exe", url, bad)
+
     def test_defaults_and_env_overrides(self):
         cfg = Settings()
         self.assertEqual(cfg.play_url, "https://www.xbox.com/de-DE/play/consoles")
         self.assertTrue(cfg.open_play_url)
+        self.assertEqual((cfg.browser_profile, cfg.web_login_timeout_s), ("", 600.0))
         env = {"XBOX_AGENT_PLAY_URL": "https://www.xbox.com/en-US/play/consoles", "XBOX_AGENT_OPEN_PLAY_URL": "0",
+               "XBOX_AGENT_BROWSER_PROFILE": "Profile 2", "XBOX_AGENT_WEB_LOGIN_TIMEOUT_S": "120",
                "XBOX_AGENT_BROWSER": "edge", "XBOX_AGENT_WINDOW_EXCLUDE": "XboxAgent, Dashboard",
                "XBOX_AGENT_CONSOLE_LABELS": "connect"}
         with mock.patch.dict(os.environ, env, clear=True):
             cfg = Settings.from_env()
         self.assertEqual((cfg.play_url, cfg.open_play_url, cfg.browser), (env["XBOX_AGENT_PLAY_URL"], False, "edge"))
         self.assertEqual((cfg.window_exclude, cfg.console_labels), (("XboxAgent", "Dashboard"), ("connect",)))
+        self.assertEqual((cfg.browser_profile, cfg.web_login_timeout_s), ("Profile 2", 120.0))
 
 
 class StartupFailures(unittest.TestCase):
@@ -185,6 +197,41 @@ class StartupFailures(unittest.TestCase):
         with mock.patch.object(launcher, "load_env_file"), mock.patch.dict(os.environ, {}, clear=True), redirect_stderr(err):
             self.assertEqual(launcher.main(), 2)
         self.assertIn(".env", err.getvalue())
+
+
+class LoginMode(unittest.TestCase):
+    """`--login`: open the Xbox page in Chrome so a human can sign in; nothing is typed or pressed."""
+
+    def run_login(self, window):
+        import io
+        from contextlib import redirect_stderr
+
+        from xbox_agent import __main__ as entry
+
+        err = io.StringIO()
+        with mock.patch.object(entry, "load_env_file"), mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch("xbox_agent.tools.windows_input.window_from_settings", return_value=window), redirect_stderr(err):
+            code = entry.main(["--login"])
+        return code, err.getvalue()
+
+    def test_opens_the_play_page_and_explains_what_to_do(self):
+        calls = []
+        window = mock.Mock(browser_path=r"C:\PF\Google\Chrome\Application\chrome.exe")
+        window.ensure_open.side_effect = lambda url: calls.append(url) or True
+        code, err = self.run_login(window)
+        self.assertEqual((code, calls), (0, ["https://www.xbox.com/de-DE/play/consoles"]))
+        self.assertIn("chrome.exe", err)
+        self.assertIn("never types credentials", err)
+        window.focus.assert_not_called()
+        window.paste.assert_not_called()
+
+    def test_reports_an_already_open_window_and_real_failures(self):
+        code, err = self.run_login(mock.Mock(**{"ensure_open.return_value": False}))
+        self.assertEqual(code, 0)
+        self.assertIn("already open", err)
+        code, err = self.run_login(mock.Mock(**{"ensure_open.side_effect": FileNotFoundError("could not find Chrome")}))
+        self.assertEqual(code, 1)
+        self.assertIn("could not find Chrome", err)
 
 
 class BatchFiles(unittest.TestCase):

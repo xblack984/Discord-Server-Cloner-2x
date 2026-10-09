@@ -38,6 +38,8 @@ class FakeConsole:
         self.game_running = False
         self.loading_snaps = 0
         self.connecting_snaps = 0
+        self.web_login_after: int | None = None  # the human signs in after this many looks at the sign-in page
+        self.web_login_looks = 0
         self.connect_stuck = False  # pressing "Verbinden" never leads to a console screen
         self.accounts = ["AgentTest99", "OtherUser"]
         self.pending_account: str | None = None
@@ -141,6 +143,10 @@ class FakeConsole:
             self.loading_snaps += 1
             if self.loading_snaps > 2:
                 self.scene = "game_main_menu"
+        if self.scene == "web_sign_in" and self.web_login_after is not None:
+            self.web_login_looks += 1
+            if self.web_login_looks > self.web_login_after:
+                self.scene = "sign_in_prompt"
         if self.scene == "connecting":
             self.connecting_snaps += 1
             if self.connecting_snaps > 2:
@@ -187,9 +193,11 @@ class FakeWindow:
     def __init__(self, console: FakeConsole, clipboard: FakeClipboard):
         self.console, self.clipboard = console, clipboard
         self.focusable, self.reloads, self.pastes = True, 0, 0
+        self.focus_calls = 0
         self.opened: list[str] = []
 
     def focus(self) -> bool:
+        self.focus_calls += 1
         return self.focusable
 
     def ensure_open(self, url: str) -> bool:
@@ -214,8 +222,11 @@ class FakeWindow:
 class FakeCapture:
     def __init__(self, console: FakeConsole):
         self.console = console
+        self.on_grab: Any = None  # optional hook, called with the scene as it was before this grab
 
     def grab(self) -> Frame:
+        if self.on_grab:
+            self.on_grab(self.console.scene)
         if self.console.black > 0:
             self.console.black -= 1
             return Frame(b"{}", "black", 0.0)
@@ -328,7 +339,8 @@ class Rig:
         self.lines: list[str] = []
         cfg_overrides.setdefault("allow_delete", True)
         self.cfg = Settings(poll_interval_s=1.0, **cfg_overrides)
-        tools = Tools(self.gamepad, self.window, FakeCapture(self.console), FakeOcr(), self.vision,
+        self.capture = FakeCapture(self.console)
+        tools = Tools(self.gamepad, self.window, self.capture, FakeOcr(), self.vision,
                       self.clipboard, self.dash, self.store)
         self.agent = XboxAgent(tools, self.cfg, sleep=self.time.sleep, clock=self.time.clock,
                                out=self.lines.append, token_factory=lambda: "tok123")

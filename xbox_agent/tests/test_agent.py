@@ -200,14 +200,47 @@ class OpenPlayPage(RigTestCase):
         rig = self.run_until_login(scene="play_consoles", console_labels=("meine konsole",))
         self.assertEqual(rig.gamepad.taps[:1], [Button.A])  # already focused: no DOWN needed
 
-    def test_a_microsoft_sign_in_page_stops_the_agent_without_typing_anything(self):
-        rig = self.make_rig(scene="web_sign_in")
+    def test_a_microsoft_sign_in_page_makes_the_agent_wait_and_never_type(self):
+        rig = self.make_rig(scene="web_sign_in", web_login_timeout_s=30)
         rig.dash.push("start_session", session_id="s1", codes=[{"id": "c1", "code": GOOD}])
         rig.dash.push("abort_session", session_id="s1")
         rig.agent.run_once()
-        self.assertEqual(rig.dash.of("error")[0]["category"], "auth")
+        err = rig.dash.of("error")[0]  # nobody signed in: escalates only after the timeout
+        self.assertEqual((err["category"], err["state"]), ("auth", "START_SESSION"))
+        self.assertGreaterEqual(rig.time.now, 30)
         self.assertEqual(rig.gamepad.taps, [])
         self.assertEqual((rig.window.pastes, rig.clipboard.history), (0, []))
+        notes = [n["message"] for n in rig.dash.of("notice")]
+        self.assertTrue(notes[0] and notes[-1] == "")  # shown while waiting, cleared afterwards
+
+    def test_when_you_sign_in_the_agent_notices_and_continues_by_itself(self):
+        rig = self.make_rig(scene="web_sign_in")
+        rig.console.web_login_after = 3
+        focus_seen = []
+        rig.capture.on_grab = lambda scene: focus_seen.append(rig.window.focus_calls) if scene == "web_sign_in" else None
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")  # ends the run at the first later wait
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("error"), [])  # no retry button needed
+        acts = self.actions(rig)
+        self.assertLess(acts.index("wait_web_login"), acts.index("web_login_done"))
+        self.assertLess(acts.index("web_login_done"), acts.index("stream_ok"))
+        notes = [n["message"] for n in rig.dash.of("notice")]
+        self.assertEqual((bool(notes[0]), notes[-1]), (True, ""))
+        # while you type, the agent must not touch the window: one focus before waiting, none during
+        self.assertGreater(len(focus_seen), 2)
+        self.assertEqual(len(set(focus_seen)), 1, focus_seen)
+        # the only pad input is the normal next step on the console (choose "sign in on another device")
+        self.assertEqual(rig.gamepad.taps, [Button.DOWN, Button.A])
+
+    def test_other_credential_screens_still_stop_immediately(self):
+        rig = self.make_rig(scene="password_prompt")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("error")[0]["category"], "auth")
+        self.assertEqual(rig.dash.of("notice"), [])
+        self.assertLess(rig.time.now, 10)
 
     def test_pressing_connect_but_never_getting_a_console_escalates_as_network(self):
         rig = self.make_rig(scene="play_consoles", connect_timeout_s=10)

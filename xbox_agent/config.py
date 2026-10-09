@@ -59,6 +59,7 @@ class Settings:
     play_url: str = "https://www.xbox.com/de-DE/play/consoles"
     open_play_url: bool = True  # the agent opens play_url in its own browser window
     browser: str = "auto"  # auto | chrome | edge | full path to chrome.exe / msedge.exe
+    browser_profile: str = ""  # Chrome profile folder ("Default", "Profile 1") that you signed in with; empty = last used
     crop_top_px: int = 80
     db_path: str = "xbox_agent.sqlite3"
     shots_dir: str = "shots"
@@ -69,6 +70,7 @@ class Settings:
     reload_wait_s: float = 8.0
     page_load_s: float = 8.0
     connect_timeout_s: float = 90.0
+    web_login_timeout_s: float = 600.0  # how long to wait for you to sign in to Microsoft in the browser
     redeem_result_timeout_s: float = 25.0
     login_detect_timeout_s: float = 60.0
     admin_login_timeout_s: float = 900.0
@@ -116,6 +118,8 @@ class Settings:
             play_url=e("XBOX_AGENT_PLAY_URL", cls.play_url),
             open_play_url=e("XBOX_AGENT_OPEN_PLAY_URL", "1") != "0",
             browser=e("XBOX_AGENT_BROWSER", cls.browser),
+            browser_profile=e("XBOX_AGENT_BROWSER_PROFILE", cls.browser_profile),
+            web_login_timeout_s=_f("XBOX_AGENT_WEB_LOGIN_TIMEOUT_S", cls.web_login_timeout_s),
             page_load_s=_f("XBOX_AGENT_PAGE_LOAD_S", cls.page_load_s),
             connect_timeout_s=_f("XBOX_AGENT_CONNECT_TIMEOUT_S", cls.connect_timeout_s),
             console_labels=_t("XBOX_AGENT_CONSOLE_LABELS", cls.console_labels),

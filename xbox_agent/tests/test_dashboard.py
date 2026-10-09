@@ -120,6 +120,20 @@ class DashboardApi(unittest.TestCase):
         self.assertEqual((cmd["type"], cmd["payload"]), ("admin_login_confirmed", {"session_id": sid}))
         self.assertEqual(self.admin("admin_login_confirmed").status_code, 409)
 
+    def test_waiting_for_you_notice_is_shown_then_cleared(self):
+        sid = self.start()
+        self.event("notice", {"message": "Sign in to Microsoft in the browser"}, image=b"png", sid=sid)
+        n = self.state()["session"]["notice"]
+        self.assertEqual(n["message"], "Sign in to Microsoft in the browser")
+        self.assertTrue(n["shot"])
+        self.event("notice", {"message": ""}, sid=sid)
+        self.assertIsNone(self.state()["session"]["notice"])
+        self.event("notice", {"message": "again"}, sid=sid)
+        self.admin("abort_session")
+        self.assertIsNone(self.state()["session"]["notice"])  # an aborted session shows no stale request
+        sid2 = self.state()["session"]["id"]
+        self.event("session_report", {"status": "aborted", "codes": []}, sid=sid2)
+
     def test_close_game_only_when_ready(self):
         sid = self.start()
         self.assertEqual(self.admin("close_game").status_code, 409)

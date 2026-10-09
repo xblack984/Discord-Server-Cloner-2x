@@ -6,6 +6,7 @@ credentials itself."""
 from __future__ import annotations
 
 import os
+import re
 from typing import Callable, Mapping, Sequence
 
 # Both Chrome and Edge create their top-level windows with this class name.
@@ -49,7 +50,13 @@ def title_matches(title: str, needle: str, exclude: Sequence[str] = ()) -> bool:
     return needle.lower() in low and not any(x.lower() in low for x in exclude if x)
 
 
-def new_window_command(executable: str, url: str) -> list[str]:
+_PROFILE = re.compile(r"^[A-Za-z0-9 _-]{1,40}$")
+
+
+def new_window_command(executable: str, url: str, profile: str = "") -> list[str]:
+    """`profile` is a Chrome/Edge profile folder name ("Default", "Profile 1"): the one you signed in with."""
     if not url.lower().startswith(("https://", "http://")):
         raise ValueError(f"refusing to open a non-http(s) address: {url!r}")
-    return [executable, "--new-window", url]
+    if profile and not _PROFILE.match(profile):
+        raise ValueError(f"invalid browser profile name: {profile!r}")
+    return [executable, *([f"--profile-directory={profile}"] if profile else []), "--new-window", url]
