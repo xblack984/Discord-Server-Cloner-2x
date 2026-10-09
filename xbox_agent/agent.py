@@ -59,6 +59,7 @@ class Session:
     delete_note: str = ""
     errors: list[dict[str, Any]] = field(default_factory=list)
     reconnects: int = 0
+    stop_after: State | None = None  # trial aid: end the session cleanly after this state
 
 
 class XboxAgent:
@@ -104,26 +105,39 @@ class XboxAgent:
 
     def run_session(self, start: Command) -> None:
         ctx = self._build_session(start)
+        steps: list[tuple[State, Callable[[], Any]]] = [
+            (State.START_SESSION, lambda: self._start_session(ctx)),
+            (State.REACH_LOGIN, lambda: self._reach_login(ctx)),
+            (State.EXTRACT_CODE, lambda: self._extract_code(ctx)),
+            (State.SEND_CODE, lambda: self._send_code(ctx)),
+            (State.WAIT_ADMIN_LOGIN, lambda: self._wait_admin_login(ctx)),
+            (State.DETECT_LOGGED_IN, lambda: self._detect_logged_in(ctx)),
+            (State.REDEEM_CODES, lambda: self._redeem_codes(ctx)),  # guards each code itself
+            (State.OPEN_LIBRARY, lambda: self._open_library(ctx)),
+            (State.LAUNCH_COD_MW, lambda: self._launch_cod(ctx)),
+            (State.WAIT_GAME_READY, lambda: self._wait_game_ready(ctx)),
+            (State.NOTIFY_GAME_READY, lambda: self._notify_game_ready(ctx)),
+            (State.WAIT_CLOSE_CMD, lambda: self._wait_close(ctx)),
+            (State.CLOSE_GAME, lambda: self._close_game(ctx)),
+            (State.LOGOUT, lambda: self._logout(ctx)),
+            (State.REQUEST_DELETE_PROFILE, lambda: self._request_delete(ctx)),
+            (State.DELETE_PROFILE, lambda: self._delete_profile(ctx)),
+        ]
+        status = "completed"
         try:
-            self._run(ctx, State.START_SESSION, lambda: self._start_session(ctx))
-            self._run(ctx, State.REACH_LOGIN, lambda: self._reach_login(ctx))
-            self._run(ctx, State.EXTRACT_CODE, lambda: self._extract_code(ctx))
-            self._run(ctx, State.SEND_CODE, lambda: self._send_code(ctx))
-            self._run(ctx, State.WAIT_ADMIN_LOGIN, lambda: self._wait_admin_login(ctx))
-            self._run(ctx, State.DETECT_LOGGED_IN, lambda: self._detect_logged_in(ctx))
-            self._enter(ctx, State.REDEEM_CODES)
-            self._redeem_codes(ctx)
-            self._run(ctx, State.OPEN_LIBRARY, lambda: self._open_library(ctx))
-            self._run(ctx, State.LAUNCH_COD_MW, lambda: self._launch_cod(ctx))
-            self._run(ctx, State.WAIT_GAME_READY, lambda: self._wait_game_ready(ctx))
-            self._run(ctx, State.NOTIFY_GAME_READY, lambda: self._notify_game_ready(ctx))
-            self._run(ctx, State.WAIT_CLOSE_CMD, lambda: self._wait_close(ctx))
-            self._run(ctx, State.CLOSE_GAME, lambda: self._close_game(ctx))
-            self._run(ctx, State.LOGOUT, lambda: self._logout(ctx))
-            self._run(ctx, State.REQUEST_DELETE_PROFILE, lambda: self._request_delete(ctx))
-            if ctx.delete_note == "confirmed":  # only an explicit, token-matched confirmation
-                self._run(ctx, State.DELETE_PROFILE, lambda: self._delete_profile(ctx))
-            status = "completed"
+            for state, fn in steps:
+                if state is State.DELETE_PROFILE and ctx.delete_note != "confirmed":
+                    continue  # only an explicit, token-matched confirmation removes a profile
+                if state is State.REDEEM_CODES:
+                    self._enter(ctx, state)
+                    fn()
+                else:
+                    self._run(ctx, state, fn)
+                if ctx.stop_after is state:
+                    status = "stopped_early"
+                    ctx.errors.append({"state": state.value, "category": "stopped_early",
+                                       "message": f"stopped after {state.value} as requested; the console was left as is"})
+                    break
         except SessionAborted as e:
             status = "aborted"
             ctx.errors.append({"state": self.state.value, "category": "aborted", "message": str(e)})
@@ -142,6 +156,11 @@ class XboxAgent:
                 rc = RedeemCode(code_id, norm)
             codes.append(rc)
         ctx = Session(id=str(start.payload.get("session_id") or start.id), codes=codes)
+        try:
+            stop = State(str(start.payload.get("stop_after") or ""))
+            ctx.stop_after = stop if stop not in (State.IDLE, State.REPORT) else None
+        except ValueError:
+            ctx.stop_after = None
         self.t.store.upsert_session(ctx.id, State.START_SESSION.value, "running")
         for c in codes:
             self.t.store.upsert_code(ctx.id, c.id, c.masked, c.status)
@@ -564,6 +583,11 @@ class XboxAgent:
     # -- profile deletion (explicit dashboard confirmation only)
 
     def _request_delete(self, ctx: Session) -> None:
+        if not self.cfg.allow_delete:
+            ctx.profile_deleted = False
+            ctx.delete_note = "skipped: profile deletion is disabled (set XBOX_AGENT_ALLOW_DELETE=1)"
+            self._emit(ctx, State.REQUEST_DELETE_PROFILE, "delete_skipped", message=ctx.delete_note)
+            return
         if not ctx.gamertag:
             ctx.profile_deleted = False
             ctx.delete_note = "skipped: gamertag unknown, cannot verify which profile to remove"

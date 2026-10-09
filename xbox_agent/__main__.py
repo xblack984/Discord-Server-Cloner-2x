@@ -1,15 +1,18 @@
-"""python -m xbox_agent [--once] [--check]
+"""python -m xbox_agent [--once] [--check] [--inspect]
 
 stdout carries only the agent's JSON step reports (one object per line); logs go to stderr.
+--check and --inspect never press a button or type anything.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 
 from .agent import Tools, XboxAgent
-from .config import Settings
+from .check import default_checks, format_results, inspect_screen, run_checks
+from .config import Settings, load_env_file
 
 
 def build_tools(cfg: Settings) -> Tools:
@@ -37,24 +40,32 @@ def build_tools(cfg: Settings) -> Tools:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="xbox_agent")
     parser.add_argument("--once", action="store_true", help="handle a single session, then exit")
-    parser.add_argument("--check", action="store_true", help="verify the environment and exit")
+    parser.add_argument("--check", action="store_true", help="test every component (incl. one vision call) and exit")
+    parser.add_argument("--inspect", action="store_true",
+                        help="print what OCR and the vision model see on the current screen, then exit")
     args = parser.parse_args(argv)
 
     logging.basicConfig(stream=sys.stderr, level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    load_env_file()
     cfg = Settings.from_env()
-    tools = build_tools(cfg)
 
     if args.check:
-        ok = tools.window.focus()
-        print(f"browser window '{cfg.window_title}' focusable: {ok}", file=sys.stderr)
-        if ok:
-            frame = tools.capture.grab()
-            print(f"capture ok, mean luma {frame.mean_luma:.1f}; OCR sample: "
-                  f"{tools.ocr.read(frame.png)[:80]!r}", file=sys.stderr)
-        return 0 if ok else 1
+        results = run_checks(default_checks(cfg))
+        print(format_results(results), file=sys.stderr)
+        return 0 if all(r.ok for r in results) else 1
 
-    agent = XboxAgent(tools, cfg)
+    if args.inspect:
+        from .tools.capture import MssCapture, TesseractOcr
+        from .tools.vision import build_vision
+        from .tools.windows_input import Win32Window
+
+        window = Win32Window(cfg.window_title, cfg.crop_top_px)
+        report = inspect_screen(window, MssCapture(window), TesseractOcr(cfg.tesseract_cmd), build_vision(cfg))
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+
+    agent = XboxAgent(build_tools(cfg), cfg)
     try:
         agent.run_once() if args.once else agent.run_forever()
     except KeyboardInterrupt:

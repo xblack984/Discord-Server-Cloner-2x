@@ -3,10 +3,36 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 def _f(name: str, default: float) -> float:
     return float(os.environ.get(name, default))
+
+
+def _t(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Comma-separated env var -> tuple of non-empty, stripped items."""
+    raw = os.environ.get(name)
+    return tuple(x.strip() for x in raw.split(",") if x.strip()) if raw else default
+
+
+def load_env_file(path: str | Path | None = None) -> None:
+    """Minimal .env reader: KEY=VALUE lines, '#' comments, optional quotes. Never overrides
+    variables already set in the real environment. Defaults to xbox_agent/.env (next to this
+    package, whatever the working directory) so it can't pick up another project's .env."""
+    try:
+        lines = Path(path or Path(__file__).parent / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key.strip(), value)
 
 
 @dataclass
@@ -42,6 +68,7 @@ class Settings:
     stall_limit: int = 3
     reconnect_attempts: int = 3
     pause_on_code_error: bool = False
+    allow_delete: bool = False  # profile removal is off until explicitly enabled
 
     # on-screen text / menu labels
     login_code_regex: str = r"\b[A-Z0-9]{6,10}\b"
@@ -76,4 +103,12 @@ class Settings:
                 "XBOX_AGENT_DELETE_CONFIRM_TIMEOUT_S", cls.delete_confirm_timeout_s
             ),
             pause_on_code_error=e("XBOX_AGENT_PAUSE_ON_CODE_ERROR", "0") == "1",
+            allow_delete=e("XBOX_AGENT_ALLOW_DELETE", "0") == "1",
+            login_code_regex=e("XBOX_AGENT_LOGIN_CODE_REGEX", cls.login_code_regex),
+            login_labels=_t("XBOX_AGENT_LOGIN_LABELS", cls.login_labels),
+            redeem_path=_t("XBOX_AGENT_REDEEM_PATH", cls.redeem_path),
+            library_labels=_t("XBOX_AGENT_LIBRARY_LABELS", cls.library_labels),
+            delete_path=_t("XBOX_AGENT_DELETE_PATH", cls.delete_path),
+            game_match=e("XBOX_AGENT_GAME_MATCH", cls.game_match),
+            game_exclude=e("XBOX_AGENT_GAME_EXCLUDE", cls.game_exclude),
         )

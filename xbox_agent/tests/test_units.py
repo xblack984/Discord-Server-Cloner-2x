@@ -79,7 +79,7 @@ class Plumbing(unittest.TestCase):
             self.assertEqual(s.unfinished_sessions(), [])
             shot = s.save_shot(b"png")
             self.assertTrue((__import__("pathlib").Path(tmp) / "shots" / f"{shot}.png").exists())
-            rows = s._db.execute("SELECT masked FROM codes").fetchall()
+            rows = s._exec("SELECT masked FROM codes")
             self.assertEqual(rows, [("XXXXX-XXXXX-XXXXX-XXXXX-EEEEE",)])
             s.close()
 

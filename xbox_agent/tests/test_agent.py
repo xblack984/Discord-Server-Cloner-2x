@@ -113,6 +113,62 @@ class DeleteSafety(RigTestCase):
         self.assertIn("no confirmation", rig.last_report()["delete_note"])
 
 
+class StopAfter(RigTestCase):
+    def run_until(self, stop_after, codes=None):
+        rig = self.make_rig()
+        rig.console.outcomes = {GOOD: "redeemed"}
+        rig.dash.push("start_session", session_id="s1", stop_after=stop_after, codes=codes or [])
+        rig.dash.push("admin_login_confirmed", session_id="s1")
+        rig.agent.run_once()
+        return rig
+
+    def visited(self, rig):
+        return {r["state"] for r in rig.reports() if r["action"] == "enter_state"}
+
+    def test_stops_cleanly_after_login_and_leaves_the_console_alone(self):
+        rig = self.run_until("DETECT_LOGGED_IN", [{"id": "c1", "code": GOOD}])
+        rep = rig.last_report()
+        self.assertEqual(rep["status"], "stopped_early")
+        self.assertIn("DETECT_LOGGED_IN", self.visited(rig))
+        self.assertNotIn("REDEEM_CODES", self.visited(rig))
+        self.assertEqual(rig.clipboard.history, [])
+        self.assertTrue(rig.console.signed_in)  # no logout was attempted
+        self.assertEqual(rep["codes"][0]["status"], "pending")
+        self.assertEqual(rep["errors"][0]["category"], "stopped_early")
+
+    def test_stops_after_redeem_without_touching_the_library(self):
+        rig = self.run_until("REDEEM_CODES", [{"id": "c1", "code": GOOD}])
+        self.assertEqual(rig.last_report()["codes"][0]["status"], "redeemed")
+        self.assertNotIn("OPEN_LIBRARY", self.visited(rig))
+
+    def test_stops_right_after_the_code_is_sent(self):
+        rig = self.make_rig()
+        rig.dash.push("start_session", session_id="s1", stop_after="SEND_CODE", codes=[])
+        rig.agent.run_once()
+        self.assertEqual(len(rig.dash.of("login_code")), 1)
+        self.assertNotIn("WAIT_ADMIN_LOGIN", self.visited(rig))
+        self.assertEqual(rig.last_report()["status"], "stopped_early")
+
+    def test_unknown_or_reserved_values_are_ignored(self):
+        for bad in ("NOPE", "IDLE", "REPORT", ""):
+            rig = self.make_rig()
+            script_full_session(rig)
+            rig.dash.queue[0].payload["stop_after"] = bad
+            rig.agent.run_once()
+            self.assertEqual(rig.last_report()["status"], "completed", bad)
+
+
+class DeleteDisabled(RigTestCase):
+    def test_deletion_is_off_by_default_even_if_the_dashboard_would_confirm(self):
+        rig = self.make_rig(allow_delete=False)
+        script_full_session(rig)
+        rig.agent.run_once()
+        self.assertEqual(rig.dash.of("delete_profile_request"), [])
+        self.assertEqual(rig.console.accounts, ["AgentTest99", "OtherUser"])
+        self.assertIn("disabled", rig.last_report()["delete_note"])
+        self.assertEqual(rig.last_report()["status"], "completed")
+
+
 class AuthRule(RigTestCase):
     def test_password_screen_stops_everything_and_waits_for_admin(self):
         rig = self.make_rig(scene="password_prompt")

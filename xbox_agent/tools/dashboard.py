@@ -17,6 +17,9 @@ class HttpDashboard:
         self._http = httpx.Client(base_url=base_url.rstrip("/"), headers=headers, timeout=45.0)
         self._retries = retries
 
+    def close(self) -> None:
+        self._http.close()
+
     def _request(self, method: str, url: str, **kw: Any) -> httpx.Response:
         last: Exception | None = None
         for attempt in range(self._retries):

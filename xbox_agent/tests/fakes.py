@@ -297,7 +297,7 @@ class FakeDashboard:
 class Rig:
     """Everything wired together; tests poke at `console`, `dash`, `agent`."""
 
-    def __init__(self, scene: str = "sign_in_prompt", **cfg_overrides: Any):
+    def __init__(self, scene: str = "sign_in_prompt", dashboard: Any = None, **cfg_overrides: Any):
         self.tmp = tempfile.TemporaryDirectory()
         self.time = FakeTime()
         self.console = FakeConsole(scene)
@@ -305,16 +305,18 @@ class Rig:
         self.window = FakeWindow(self.console, self.clipboard)
         self.gamepad = FakeGamepad(self.console)
         self.vision = FakeVision()
-        self.dash = FakeDashboard(self.time)
+        self.dash = dashboard or FakeDashboard(self.time)
         self.store = SqliteStore(f"{self.tmp.name}/db.sqlite3", f"{self.tmp.name}/shots")
         self.lines: list[str] = []
+        cfg_overrides.setdefault("allow_delete", True)
         self.cfg = Settings(poll_interval_s=1.0, **cfg_overrides)
         tools = Tools(self.gamepad, self.window, FakeCapture(self.console), FakeOcr(), self.vision,
                       self.clipboard, self.dash, self.store)
         self.agent = XboxAgent(tools, self.cfg, sleep=self.time.sleep, clock=self.time.clock,
                                out=self.lines.append, token_factory=lambda: "tok123")
-        self.dash.on_deliver["admin_login_confirmed"] = (
-            lambda c: self.console.admin_login() if c.payload.get("session_id") == "s1" else None)
+        if isinstance(self.dash, FakeDashboard):  # a real dashboard has no hooks; its admin logs in by hand
+            self.dash.on_deliver["admin_login_confirmed"] = (
+                lambda c: self.console.admin_login() if c.payload.get("session_id") == "s1" else None)
 
     def close(self) -> None:
         self.store.close()

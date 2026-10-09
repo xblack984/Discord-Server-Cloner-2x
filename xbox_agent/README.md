@@ -31,32 +31,35 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 الأكواد الكاملة تبقى في الذاكرة فقط. في SQLite والتقارير والـ stdout يظهر القناع `XXXXX-…-EEEEE`.
 تنبيه: ملفات PNG في `shots/` (ولقطات الأخطاء المرسلة للـ Dashboard) قد تُظهر الكود إن التُقطت وهو على شاشة Redeem، فاحمِ هذا المجلد.
 
-## التثبيت (Windows 10/11، Python 3.11+)
+## التشغيل والتجربة
 
-1. ثبّت **ViGEmBus** (مطلوب لـ vgamepad) و**Tesseract OCR**.
-2. `pip install -r xbox_agent/requirements.txt`
-3. افتح Xbox Remote Play في Chrome/Edge بحجم نافذة ثابت.
-4. اضبط المتغيرات:
+الدليل الكامل خطوة بخطوة: [`TRIAL.md`](TRIAL.md). باختصار على Windows 10/11 (Python 3.11+):
+
+1. ثبّت **ViGEmBus** و**Tesseract OCR**.
+2. `xbox_agent\scripts\setup.bat`، ثم املأ `xbox_agent\.env` (انسخه من `.env.example`).
+3. `xbox_agent\scripts\run_dashboard.bat` ثم افتح http://127.0.0.1:8000
+4. `xbox_agent\scripts\run_agent.bat --check` ثم `--inspect` ثم `run_agent.bat`.
+
+الإعدادات تُقرأ من `xbox_agent/.env` (أو من متغيرات البيئة، وهي تتغلب عليه). أهمها:
 
 | المتغير | الافتراضي |
 |---|---|
-| `XBOX_AGENT_VISION_PROVIDER` | `auto`؛ القيم: `auto` / `gemini` / `claude` (انظر «مزوّد الرؤية») |
-| `GEMINI_API_KEY` | مطلوب فقط عند استخدام Gemini |
-| `ANTHROPIC_API_KEY` | مطلوب فقط عند استخدام Claude (أو سجّل الدخول بـ `ant auth login`) |
-| `XBOX_AGENT_CLAUDE_MODEL` | `claude-opus-5-5` |
-| `XBOX_AGENT_CLAUDE_EFFORT` | `low` (`low`…`max`) |
-| `XBOX_AGENT_CLAUDE_FALLBACKS` | `1`؛ ضع `0` لإيقاف الـ fallback من جهة الخادم |
 | `XBOX_AGENT_DASHBOARD_URL` | `http://127.0.0.1:8000` |
-| `XBOX_AGENT_DASHBOARD_TOKEN` | فارغ (Bearer) |
+| `XBOX_AGENT_DASHBOARD_TOKEN` | سرّ الوكيل مع الداشبورد (Bearer) |
+| `DASHBOARD_ADMIN_TOKEN` | سرّ المشرف للوحة الويب (يجب أن يختلف عن السابق) |
+| `XBOX_AGENT_VISION_PROVIDER` | `auto`؛ القيم: `auto` / `gemini` / `claude` (انظر «مزوّد الرؤية») |
+| `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | حسب المزوّد (Claude يقبل أيضًا `ant auth login`) |
+| `XBOX_AGENT_CLAUDE_MODEL` / `_EFFORT` / `_FALLBACKS` | `claude-opus-5-5` / `low` / `1` |
 | `XBOX_AGENT_WINDOW_TITLE` | `Xbox` (جزء من عنوان نافذة المتصفح) |
 | `TESSERACT_CMD` | مسار `tesseract.exe` إن لم يكن في PATH |
+| `XBOX_AGENT_ALLOW_DELETE` | `0`؛ حذف البروفايل معطّل حتى تضع `1` (ويبقى تأكيد الداشبورد مطلوبًا) |
+| `XBOX_AGENT_PAUSE_ON_CODE_ERROR` | `0`؛ ضعه `1` ليتوقف عند كل كود خاطئ/مستخدم بدل المتابعة |
+| `XBOX_AGENT_LOGIN_LABELS`, `_REDEEM_PATH`, `_LIBRARY_LABELS`, `_DELETE_PATH`, `_GAME_MATCH`, `_GAME_EXCLUDE`, `_LOGIN_CODE_REGEX` | أسماء القوائم؛ تُضبط بـ `--inspect` |
+| `XBOX_AGENT_ADMIN_LOGIN_TIMEOUT_S`, `..._GAME_READY_TIMEOUT_S`, `..._DELETE_CONFIRM_TIMEOUT_S`, `..._SETTLE_S` | 900 / 600 / 1800 / 1.2 |
 | `XBOX_AGENT_DB`, `XBOX_AGENT_SHOTS_DIR` | `xbox_agent.sqlite3`, `shots` |
-| `XBOX_AGENT_ADMIN_LOGIN_TIMEOUT_S`, `..._GAME_READY_TIMEOUT_S`, `..._DELETE_CONFIRM_TIMEOUT_S` | 900 / 600 / 1800 |
-| `XBOX_AGENT_PAUSE_ON_CODE_ERROR` | `0`; ضعه `1` ليتوقف عند كل كود خاطئ/مستخدم بدل المتابعة |
 
-5. من جذر المستودع:
-   - `python -m xbox_agent --check` يتحقق من النافذة والالتقاط وOCR
-   - `python -m xbox_agent` حلقة دائمة، أو `--once` لجلسة واحدة
+أوضاع التشغيل: `python -m xbox_agent` (حلقة دائمة)، `--once` (جلسة واحدة)، `--check` (يفحص كل مكوّن ويجري استدعاء رؤية واحدًا)،
+`--inspect` (يعرض ما يقرؤه OCR والنموذج على الشاشة الحالية). الوضعان الأخيران لا يضغطان أي زر.
 
 ## مزوّد الرؤية (Vision)
 
@@ -77,26 +80,49 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 - OpenAI غير مدعوم عمدًا (حسب الـ prompt الأصلي). لإضافة مزوّد آخر: صنف يطبّق `ask(png, task, required_keys, schema)`
   ويعيد `dict`، ثم أضفه في `tools/vision.py`.
 
-## عقد الـ Dashboard (يجب أن يوفّره الـ FastAPI)
+## لوحة الويب (Dashboard)
 
-كل الطلبات بـ `Authorization: Bearer <token>`.
+`python -m xbox_agent.dashboard` (أو `run_dashboard.bat`) يشغّل لوحة FastAPI جاهزة في `xbox_agent/dashboard/`
+(`pip install -r xbox_agent/requirements-dashboard.txt`). منها يتم **كل** التحكم:
 
-- `GET /api/agent/commands?wait=<s>` يعيد قائمة `[{ "id", "type", "payload" }]` (long-poll).
+| ما تفعله | أين |
+|---|---|
+| بدء جلسة بقائمة أكواد (يُتحقق من صيغتها وتكرارها)، مع خيار «أنهِ بعد مرحلة معيّنة» للتجربة | بطاقة «بدء جلسة» |
+| رؤية كود الدخول على الكونسول وتأكيد أنك سجّلت الدخول | بطاقة كود الدخول |
+| رؤية الأخطاء (صورة + نص OCR + تصنيف) والرد: إعادة / تخطي / إيقاف | البطاقة الحمراء |
+| إغلاق اللعبة عند الانتهاء | بطاقة «اللعبة جاهزة» |
+| تأكيد حذف بروفايل بكتابة اسم الحساب بالضبط، أو رفضه | بطاقة الحذف |
+| متابعة الأكواد والأحداث والتقرير النهائي، وإيقاف الجلسة | بقية اللوحة |
+
+أمان اللوحة: سرّان مختلفان وإلزاميان (وكيل ومشرف)، العنوان الافتراضي `127.0.0.1` (غيّره بـ `DASHBOARD_HOST` فقط خلف HTTPS)،
+CSP صارم بلا سكربت مضمّن، وكل نص قادم من الشاشة يُعرض نصًا لا HTML، والأكواد الكاملة تُمسح من سجل اللوحة بعد تسليمها للوكيل،
+وتوكن حذف البروفايل يبقى في الخادم ولا يصل المتصفح.
+
+## الدمج مع لوحتك وبوتك
+
+الوكيل لا يعرف شيئًا عن لوحتك سوى هذا العقد (HTTP)، وهو بالضبط ما تنفّذه اللوحة المرجعية، فيمكن نقله إلى أي backend:
+كل الطلبات بـ `Authorization: Bearer <XBOX_AGENT_DASHBOARD_TOKEN>`.
+
+- `GET /api/agent/commands?wait=<s>` يعيد قائمة `[{ "id", "type", "payload" }]` (long-poll؛ كل أمر يُسلَّم مرة واحدة).
 - `POST /api/agent/commands/{id}/ack`
-- `POST /api/agent/events` بصيغة multipart: حقل `data` = JSON `{ "kind", "payload" }`، وملف اختياري `image` (PNG).
+- `POST /api/agent/events` بصيغة form/multipart: حقل `data` = JSON `{ "kind", "payload" }`، وملف اختياري `image` (PNG).
 
 الأوامر التي يفهمها الوكيل (`payload.session_id` يربطها بالجلسة، وأوامر جلسة أخرى تُهمل):
 
 | `type` | الغرض |
 |---|---|
-| `start_session` | `{ session_id, codes: [{ id, code }] }` |
+| `start_session` | `{ session_id, codes: [{ id, code }], stop_after? }` |
 | `admin_login_confirmed` | المشرف أنهى الدخول بالكود |
 | `close_game` | إغلاق اللعبة وبدء الخروج |
 | `confirm_delete_profile` / `deny_delete_profile` | `{ token }` = التوكن الذي وصل في `delete_profile_request` |
 | `retry` / `resume` / `skip` / `abort_session` | ردود المشرف بعد التصعيد (`skip` متاح لكود Redeem فقط) |
 
 أنواع الأحداث الصادرة (`kind`): `step`, `login_code`, `redeem_result`, `error`, `game_ready`,
-`delete_profile_request`, `session_report`.
+`delete_profile_request`, `session_report`. المنطق الذي يجب أن تحافظ عليه لوحتك (ملف `dashboard/state.py`): التحقق من صيغة
+الأكواد، رفض أزرار لا شيء لها (مثل إغلاق لعبة غير جاهزة)، ومنع حذف البروفايل إلا بتوكن الطلب نفسه.
+
+لتشغيل الوكيل داخل تطبيقك بدل عملية منفصلة: `XboxAgent(tools, cfg).run_forever()` من أي خيط؛ المخزن آمن للخيوط
+ويجب أن يملك الوكيل نافذة المتصفح واليد الوهمية وحده.
 
 ## الاختبارات
 
@@ -106,10 +132,12 @@ python -m unittest discover -s xbox_agent/tests -t .
 
 تعمل على أي نظام: كونسول وهمي (`tests/fakes.py`) يحاكي القوائم وشاشات Redeem واللعبة وحذف الحساب،
 وتغطي المسار الكامل ومسارات الأمان (شاشة كلمة المرور، توكن خاطئ، لصق فاشل، لعبة غير مثبتة، إطار أسود…).
+مع تثبيت `requirements-dashboard.txt` و`httpx` تعمل أيضًا اختبارات اللوحة، ومنها اختبار يشغّل الوكيل الحقيقي ضد
+اللوحة الحقيقية عبر HTTP بينما "مشرف" آلي يضغط الأزرار؛ وبدونها تُتخطى (`skipped`).
 
 ## حدود معروفة
 
-- **لم تُجرَّب على Xbox حقيقي ولا على Windows.** تنفيذات `vgamepad` و`mss` و`pytesseract` و`windows_input.py` ومزوّدا الرؤية مع شبكتهما الفعلية كُتبت لكن لم تُشغَّل هنا (لا مفاتيح API)؛ المختبَر هو منطق الوكيل عبر الأدوات الوهمية، وشكل الطلب إلى Claude عبر عميل وهمي.
-- مسارات القوائم في `config.py` (`redeem_path`, `library_labels`, `delete_path`, `login_labels`) افتراضات عن واجهة Xbox بالإنجليزية، وستحتاج ضبطًا على الكونسول الفعلي. حين لا يجد الوكيل العنصر أو يجده بشكل ملتبس يصعّد ولا يخمّن.
+- **لم تُجرَّب على Xbox حقيقي ولا على Windows**، وسكربتات `.bat` لم تُشغَّل. تنفيذات `vgamepad` و`mss` و`pytesseract` و`windows_input.py` ومزوّدا الرؤية مع شبكتهما الفعلية كُتبت لكن لم تُشغَّل هنا (لا مفاتيح API)؛ المختبَر هو منطق الوكيل عبر الأدوات الوهمية، وشكل الطلب إلى Claude عبر عميل وهمي.
+- مسارات القوائم الافتراضية (`redeem_path`, `library_labels`, `delete_path`, `login_labels`) افتراضات عن واجهة Xbox بالإنجليزية، وتُضبط من `.env` بعد `--inspect`. حين لا يجد الوكيل العنصر أو يجده بشكل ملتبس يصعّد ولا يخمّن.
 - إعادة الاتصال تستخدم F5 (مفتاح تنقل، لا إدخال نصي). لا يُستخدم الماوس إطلاقًا.
 - استخدمه فقط على حسابات وكونسولات تملكها أو مخوّل بتشغيلها.

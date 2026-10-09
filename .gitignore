@@ -9,3 +9,7 @@ __pycache__/
 *.pyc
 xbox_agent.sqlite3
 shots/
+xbox_agent/.env
+.venv-xbox/
+inspect/
+dashboard_shots/

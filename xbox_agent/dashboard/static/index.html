@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>لوحة XboxAgent</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>XboxAgent</h1>
+    <div id="chips"></div>
+  </header>
+
+  <main>
+    <section id="gate" class="card hidden">
+      <h2>تسجيل الدخول للوحة</h2>
+      <p>أدخل توكن المشرف (<code dir="ltr">DASHBOARD_ADMIN_TOKEN</code>). يُحفظ في هذه التبويبة فقط.</p>
+      <form id="gate-form">
+        <input id="gate-token" type="password" autocomplete="off" dir="ltr" required>
+        <button type="submit" class="primary">دخول</button>
+      </form>
+    </section>
+
+    <div id="banner" class="banner hidden"></div>
+
+    <section id="card-start" class="card hidden">
+      <h2>بدء جلسة</h2>
+      <p>أكواد Redeem، كود في كل سطر (اختياري). تُرسل للوكيل ولا تبقى ظاهرة هنا.</p>
+      <textarea id="codes" rows="4" dir="ltr" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"></textarea>
+      <label for="stop-after">للتجربة: أنهِ الجلسة بعد مرحلة معيّنة (يُترك الكونسول كما هو)</label>
+      <select id="stop-after">
+        <option value="">الجلسة كاملة</option>
+        <option value="SEND_CODE">بعد ظهور كود الدخول</option>
+        <option value="DETECT_LOGGED_IN">بعد تسجيل الدخول</option>
+        <option value="REDEEM_CODES">بعد الـ Redeem</option>
+        <option value="WAIT_GAME_READY">بعد جاهزية اللعبة</option>
+      </select>
+      <button id="btn-start" class="primary">بدء الجلسة</button>
+    </section>
+
+    <section id="card-login" class="card attention hidden">
+      <h2>كود الدخول على الكونسول</h2>
+      <p>أدخل هذا الكود بحساب Microsoft من جهازك، ثم اضغط التأكيد.</p>
+      <div id="login-code" class="bigcode" dir="ltr"></div>
+      <img id="login-shot" class="shot hidden" alt="">
+      <button id="btn-login-ok" class="primary">تم تسجيل الدخول</button>
+    </section>
+
+    <section id="card-error" class="card danger hidden">
+      <h2 id="err-title"></h2>
+      <p id="err-msg"></p>
+      <details><summary>النص المقروء من الشاشة (OCR)</summary><pre id="err-ocr" dir="auto"></pre></details>
+      <img id="err-shot" class="shot hidden" alt="">
+      <div class="row">
+        <button id="btn-retry" class="primary">إعادة المحاولة</button>
+        <button id="btn-skip">تخطي</button>
+      </div>
+    </section>
+
+    <section id="card-ready" class="card ok hidden">
+      <h2>اللعبة جاهزة</h2>
+      <p>عند الانتهاء أغلق اللعبة. الوكيل سيخرج من الحساب بعدها.</p>
+      <button id="btn-close" class="primary">إغلاق اللعبة</button>
+    </section>
+
+    <section id="card-delete" class="card danger hidden">
+      <h2>طلب حذف بروفايل</h2>
+      <p id="del-text"></p>
+      <p>الحذف لا رجعة فيه. اكتب اسم الحساب بالضبط لتأكيده.</p>
+      <input id="del-input" dir="ltr" autocomplete="off" spellcheck="false">
+      <div class="row">
+        <button id="btn-del-ok" class="danger-btn">تأكيد الحذف</button>
+        <button id="btn-del-no">رفض</button>
+      </div>
+    </section>
+
+    <section id="card-codes" class="card hidden">
+      <h2>الأكواد</h2>
+      <table><thead><tr><th>الكود</th><th>الحالة</th></tr></thead><tbody id="codes-body"></tbody></table>
+    </section>
+
+    <section id="card-report" class="card hidden">
+      <h2>التقرير النهائي</h2>
+      <pre id="report" dir="ltr"></pre>
+    </section>
+
+    <section class="card">
+      <h2>الأحداث</h2>
+      <ul id="events"></ul>
+      <img id="event-shot" class="shot hidden" alt="">
+    </section>
+  </main>
+
+  <footer>
+    <button id="btn-abort" class="danger-btn">إيقاف الجلسة</button>
+    <button id="btn-reset">إعادة ضبط اللوحة (إذا توقف الوكيل)</button>
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>
