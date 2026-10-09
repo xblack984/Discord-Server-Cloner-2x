@@ -41,6 +41,7 @@ IDLE → START_SESSION → REACH_LOGIN → EXTRACT_CODE → SEND_CODE → WAIT_A
 2. `xbox_agent\scripts\setup.bat`، ثم املأ `xbox_agent\.env` (انسخه من `.env.example`).
 3. `xbox_agent\scripts\run_dashboard.bat` ثم افتح http://127.0.0.1:8000
 4. `xbox_agent\scripts\run_agent.bat --check` ثم `--inspect` ثم `run_agent.bat`.
+   أو `xbox_agent\scripts\start_all.bat`: يشغّل اللوحة في نافذة مستقلة ويفتحها في المتصفح ثم يشغّل الوكيل. **اللوحة يجب أن تبقى تعمل**؛ بدونها يكتب الوكيل «dashboard is not reachable» (WinError 10061) ويعيد المحاولة وحده.
 
 الإعدادات تُقرأ من `xbox_agent/.env` (أو من متغيرات البيئة، وهي تتغلب عليه). أهمها:
 

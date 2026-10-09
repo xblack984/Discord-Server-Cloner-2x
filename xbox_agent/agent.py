@@ -83,6 +83,9 @@ class XboxAgent:
         self._focused = False
         self._last_frame: Frame | None = None
         self._pending: list[Command] = []
+        self._dash_down_since: float | None = None
+        self._dash_last_fail: float | None = None
+        self._dash_warned_at: float | None = None
         self.nav = Navigator(cfg, tools.vision, self._press, self._snap, sleep)
 
     # ------------------------------------------------------------------ main loops
@@ -250,16 +253,39 @@ class XboxAgent:
         self._post(kind, {"session_id": sid, **report.to_dict()}, frame.png if frame and send_image else None)
         return report
 
+    def _dash_failed(self, error: Exception) -> None:
+        """Tell the user once, in plain words, what is wrong; repeat only once a minute."""
+        now = self.clock()
+        self._dash_last_fail = now
+        if self._dash_down_since is None:
+            self._dash_down_since = self._dash_warned_at = now
+            log.warning("The dashboard at %s is not reachable (%s). Start xbox_agent\\scripts\\run_dashboard.bat in "
+                        "another window and leave it open (or use start_all.bat). The agent keeps retrying.",
+                        self.cfg.dashboard_url, error)
+        elif self._dash_warned_at is None or now - self._dash_warned_at >= 60:
+            self._dash_warned_at = now
+            log.warning("Still waiting for the dashboard at %s", self.cfg.dashboard_url)
+
+    def _dash_ok(self) -> None:
+        if self._dash_down_since is not None:
+            log.info("The dashboard is reachable again")
+            self._dash_down_since = self._dash_last_fail = self._dash_warned_at = None
+
     def _post(self, kind: str, payload: dict[str, Any], image: bytes | None = None) -> None:
+        if self._dash_last_fail is not None and self.clock() - self._dash_last_fail < 30:
+            return  # known to be down: don't stall every step on retries (the event stays in the local store)
         try:
             self.t.dashboard.post_event(kind, payload, image)
+            self._dash_ok()
         except DashboardError as e:
-            log.warning("dashboard unreachable (%s); event %s kept in local store only", e, kind)
+            self._dash_failed(e)
 
     def _post_strict(self, kind: str, payload: dict[str, Any], image: bytes | None = None) -> None:
         try:
             self.t.dashboard.post_event(kind, payload, image)
+            self._dash_ok()
         except DashboardError as e:
+            self._dash_failed(e)
             raise Escalation(ErrorCategory.NETWORK, f"could not deliver {kind} to the dashboard: {e}")
 
     def _wait_command(
@@ -287,8 +313,9 @@ class XboxAgent:
                 wait = max(0.0, min(wait, deadline - self.clock()))
             try:
                 self._pending.extend(self.t.dashboard.fetch_commands(wait))
+                self._dash_ok()
             except DashboardError as e:
-                log.warning("cannot poll dashboard: %s", e)
+                self._dash_failed(e)
                 self.sleep(self.cfg.poll_interval_s)
             if on_tick and self.clock() - last_tick >= self.cfg.heartbeat_s:
                 last_tick = self.clock()

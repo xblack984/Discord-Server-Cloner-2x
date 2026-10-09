@@ -27,7 +27,9 @@
    - `XBOX_AGENT_DASHBOARD_TOKEN` و`DASHBOARD_ADMIN_TOKEN`: سرّان **مختلفان** (الأمر لتوليدهما في أول الملف).
    - مفتاح الرؤية، و`XBOX_AGENT_WINDOW_TITLE` إن لم يحتوِ عنوان نافذتك كلمة `Xbox`.
    - اترك `XBOX_AGENT_ALLOW_DELETE=0`.
-3. `xbox_agent\scripts\run_dashboard.bat` ثم افتح http://127.0.0.1:8000 وأدخل `DASHBOARD_ADMIN_TOKEN`.
+3. **الأسهل: `xbox_agent\scripts\start_all.bat`.** يشغّل اللوحة في نافذة مستقلة (اتركها مفتوحة)، ويفتح http://127.0.0.1:8000 في متصفحك، ثم يشغّل الوكيل في النافذة الحالية.
+   أدخل في اللوحة `DASHBOARD_ADMIN_TOKEN`. (أو شغّل `run_dashboard.bat` و`run_agent.bat` كلًّا في نافذة.)
+   **اللوحة والوكيل يجب أن يعملا معًا**: الوكيل يستلم أوامره من اللوحة.
 
 ## 2) فحص المكوّنات
 
@@ -88,6 +90,7 @@ xbox_agent\scripts\run_agent.bat --inspect
 | «ambiguous …» أو «not found in menu» | اسم العنصر مختلف؛ استخدم `--inspect` وعدّل الإعداد. |
 | «pasted text … not visible» | النافذة فقدت التركيز أو حقل الإدخال غير محدد. الوكيل لم يضغط A. |
 | «browser window could not be brought to the foreground» | Windows منع التركيز؛ انقر النافذة يدويًا مرة ثم أعد المحاولة. |
+| `dashboard is not reachable ... WinError 10061` | اللوحة غير مشغّلة أو أُغلقت نافذتها. شغّل `run_dashboard.bat` (أو `start_all.bat`) واتركها مفتوحة؛ الوكيل يعيد المحاولة وحده ويكتب «reachable again». إن قالت اللوحة إن المنفذ مستخدم فغيّر `DASHBOARD_PORT` و`XBOX_AGENT_DASHBOARD_URL` في `.env` معًا. |
 | الوكيل يصوّر لوحة التحكم بدل Xbox | كان هذا خطأ في النسخ القديمة (عنوان اللوحة يحوي كلمة Xbox). النسخة الجديدة تثبّت على نافذتها بالمقبض، وتستبعد أي نافذة عنوانها `XboxAgent`. |
 | «no new browser window appeared» | لم يُفتح المتصفح: حدّد `XBOX_AGENT_BROWSER` بالمسار الكامل لـ chrome.exe أو msedge.exe. |
 | «ambiguous …» أو «not found» عند زر الاتصال | اسم الزر في صفحتك مختلف: افتحها وشغّل `--inspect` وضع الاسم في `XBOX_AGENT_CONSOLE_LABELS`. |

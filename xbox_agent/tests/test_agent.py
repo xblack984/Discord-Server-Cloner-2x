@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from xbox_agent.models import Button, Command, display_code
+from xbox_agent.models import Button, Command, Escalation, display_code
 from xbox_agent.tests.fakes import Rig, RigTestCase
 
 GOOD = "AAAAABBBBBCCCCCDDDDDEEEEE"
@@ -156,6 +156,76 @@ class StopAfter(RigTestCase):
             rig.dash.queue[0].payload["stop_after"] = bad
             rig.agent.run_once()
             self.assertEqual(rig.last_report()["status"], "completed", bad)
+
+
+class DashboardDown(RigTestCase):
+    """The dashboard is not running (WinError 10061): say so once, plainly, and recover by itself."""
+
+    def flaky(self, rig_time, down_polls):
+        from xbox_agent.tests.fakes import FakeDashboard
+        from xbox_agent.tools.protocols import DashboardError
+
+        class Flaky(FakeDashboard):
+            polls = 0
+            post_attempts = 0
+
+            def fetch_commands(self, wait_s):
+                Flaky.polls += 1
+                if Flaky.polls <= down_polls:
+                    raise DashboardError("GET /api/agent/commands failed: [WinError 10061] connection refused")
+                return super().fetch_commands(wait_s)
+
+            def post_event(self, kind, payload, image=None):
+                Flaky.post_attempts += 1
+                if Flaky.polls <= down_polls:
+                    raise DashboardError("POST /api/agent/events failed: [WinError 10061] connection refused")
+                return super().post_event(kind, payload, image)
+
+        return Flaky(rig_time)
+
+    def test_one_clear_message_then_recovery_and_the_session_still_runs(self):
+        from xbox_agent.tests.fakes import FakeTime
+
+        time_ = FakeTime()
+        dash = self.flaky(time_, down_polls=3)
+        rig = self.make_rig(dashboard=dash)
+        rig.dash.time = rig.time  # one clock for the agent and the fake dashboard
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        with self.assertLogs("xbox_agent", level="INFO") as logs:
+            rig.agent.run_once()
+        warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
+        self.assertEqual(len(warnings), 1, warnings)  # three failed polls, one message
+        self.assertIn("run_dashboard.bat", warnings[0])
+        self.assertIn(rig.cfg.dashboard_url, warnings[0])
+        self.assertTrue(any("reachable again" in r.getMessage() for r in logs.records))
+        self.assertEqual(rig.last_report()["status"], "aborted")  # it did run the session after the dashboard came up
+
+    def test_repeats_are_limited_to_one_per_minute(self):
+        rig = self.make_rig(dashboard=self.flaky(None, down_polls=130))
+        rig.dash.time = rig.time
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("abort_session", session_id="s1")
+        with self.assertLogs("xbox_agent", level="INFO") as logs:
+            rig.agent.run_once()
+        warnings = [r.getMessage() for r in logs.records if r.levelname == "WARNING"]
+        self.assertEqual(len(warnings), 3, warnings)  # first + after 60 s + after 120 s
+        self.assertTrue(all("Still waiting" in w for w in warnings[1:]))
+
+    def test_known_down_dashboard_is_not_hammered_with_events(self):
+        rig = self.make_rig(dashboard=self.flaky(None, down_polls=10**6))
+        rig.dash.time = rig.time
+        with self.assertLogs("xbox_agent", level="WARNING"):
+            rig.agent._post("step", {})
+            rig.agent._post("step", {})
+            rig.agent._post("step", {})
+        self.assertEqual(rig.dash.post_attempts, 1)  # the others were skipped, not retried for seconds each
+
+    def test_critical_notifications_are_still_attempted_and_escalate(self):
+        rig = self.make_rig(dashboard=self.flaky(None, down_polls=10**6))
+        rig.dash.time = rig.time
+        with self.assertLogs("xbox_agent", level="WARNING"), self.assertRaises(Escalation):
+            rig.agent._post_strict("login_code", {"code": "X"})
 
 
 class OpenPlayPage(RigTestCase):

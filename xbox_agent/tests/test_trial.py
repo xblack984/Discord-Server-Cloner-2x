@@ -239,8 +239,8 @@ class BatchFiles(unittest.TestCase):
 
     scripts = sorted(Path(__file__).resolve().parents[1].glob("scripts/*.bat"))
 
-    def test_there_are_three_scripts(self):
-        self.assertEqual([p.name for p in self.scripts], ["run_agent.bat", "run_dashboard.bat", "setup.bat"])
+    def test_the_expected_scripts_exist(self):
+        self.assertEqual([p.name for p in self.scripts], ["run_agent.bat", "run_dashboard.bat", "setup.bat", "start_all.bat"])
 
     def test_crlf_line_endings(self):
         for p in self.scripts:
@@ -253,8 +253,14 @@ class BatchFiles(unittest.TestCase):
             self.assertGreaterEqual(text.count("pause"), 1, p.name)
             self.assertTrue(text.rstrip().endswith("pause") or text.rstrip().endswith("exit /b 1"), p.name)
 
+    def test_start_all_launches_the_dashboard_first_in_its_own_window(self):
+        text = (self.scripts[0].parent / "start_all.bat").read_text()
+        self.assertLess(text.index("run_dashboard.bat"), text.index("run_agent.bat"))
+        self.assertIn('start "XboxAgent dashboard"', text)
+        self.assertIn("%*", text)  # arguments reach the agent
+
     def test_run_scripts_check_the_setup_before_starting(self):
-        for name in ("run_agent.bat", "run_dashboard.bat"):
+        for name in ("run_agent.bat", "run_dashboard.bat", "start_all.bat"):
             text = (self.scripts[0].parent / name).read_text()
             self.assertIn(r".venv-xbox\Scripts\python.exe", text)
             self.assertIn(r"xbox_agent\.env", text)
