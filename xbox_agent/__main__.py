@@ -58,7 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     load_env_file()
-    cfg = Settings.from_env()
+    try:
+        cfg = Settings.from_env()
+    except ValueError as e:
+        print(f"Invalid setting in xbox_agent\\.env: {e}", file=sys.stderr)
+        return 2
 
     if args.check:
         results = run_checks(default_checks(cfg))

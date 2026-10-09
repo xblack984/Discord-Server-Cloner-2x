@@ -84,6 +84,11 @@ class Settings:
     stall_limit: int = 3
     reconnect_attempts: int = 3
     pause_on_code_error: bool = False
+    vision_attempts: int = 3  # tries per vision call (1 = no retry); transient failures only
+    second_looks: int = 2  # extra looks at a screen the vision model could not recognise, before giving up
+    # Decisions that otherwise stop the session and wait for you. "ask" keeps asking; the others decide.
+    on_game_running: str = "ask"  # a game is on the console screen: ask | start (press A) | close | keep
+    on_signed_in: str = "ask"  # the console is already signed in: ask | use (continue with that profile)
     allow_delete: bool = False  # profile removal is off until explicitly enabled
 
     # on-screen text / menu labels
@@ -107,6 +112,12 @@ class Settings:
     game_exclude: str = r"modern\s*warfare\W*\s*(ii|iii|2|3)\b|warzone"
     delete_path: tuple[str, ...] = ("profile|profil|الملف الشخصي", "settings|einstellungen|إعدادات", "account|konto|حساب",
                                     "remove accounts|konten entfernen|إزالة الحسابات")
+
+    def __post_init__(self) -> None:
+        if self.on_game_running not in ("ask", "start", "close", "keep"):
+            raise ValueError(f"XBOX_AGENT_ON_GAME_RUNNING must be ask, start, close or keep (got '{self.on_game_running}')")
+        if self.on_signed_in not in ("ask", "use"):
+            raise ValueError(f"XBOX_AGENT_ON_SIGNED_IN must be ask or use (got '{self.on_signed_in}')")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -146,6 +157,10 @@ class Settings:
             ),
             pause_on_code_error=e("XBOX_AGENT_PAUSE_ON_CODE_ERROR", "0") == "1",
             allow_delete=e("XBOX_AGENT_ALLOW_DELETE", "0") == "1",
+            vision_attempts=int(e("XBOX_AGENT_VISION_ATTEMPTS", cls.vision_attempts)),
+            second_looks=int(e("XBOX_AGENT_SECOND_LOOKS", cls.second_looks)),
+            on_game_running=e("XBOX_AGENT_ON_GAME_RUNNING", cls.on_game_running).strip().lower(),
+            on_signed_in=e("XBOX_AGENT_ON_SIGNED_IN", cls.on_signed_in).strip().lower(),
             login_code_regex=e("XBOX_AGENT_LOGIN_CODE_REGEX", cls.login_code_regex),
             login_labels=_t("XBOX_AGENT_LOGIN_LABELS", cls.login_labels),
             signin_labels=_t("XBOX_AGENT_SIGNIN_LABELS", cls.signin_labels),

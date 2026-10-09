@@ -16,7 +16,7 @@ from xbox_agent.config import Settings
 from xbox_agent.tools.claude_vision import ClaudeVision
 from xbox_agent.tools.deepseek_vision import DeepSeekVision
 from xbox_agent.tools.images import encode_image as _encode_image
-from xbox_agent.tools.vision import build_vision
+from xbox_agent.tools.vision import RetryingVision, build_backend, build_vision, is_transient
 
 FORBIDDEN = {"minimum", "maximum", "multipleOf", "minLength", "maxLength", "minItems", "maxItems"}
 
@@ -277,6 +277,72 @@ class DeepSeekOverRealHttp(unittest.TestCase):
         self.assertTrue(body["messages"][0]["content"][0]["image_url"]["url"].startswith("data:image/png;base64,"))
 
 
+class RetryingVisionTests(unittest.TestCase):
+    def make(self, *outcomes, attempts=3):
+        class Inner:
+            calls = 0
+
+            def ask(self, png, task, keys, schema=None):
+                Inner.calls += 1
+                outcome = outcomes[min(Inner.calls, len(outcomes)) - 1]
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+        sleeps, ticks = [], iter(range(0, 1000, 3))  # every clock() call advances 3 s
+        wrapper = RetryingVision(Inner(), attempts=attempts, sleep=sleeps.append, clock=lambda: float(next(ticks)))
+        return wrapper, Inner, sleeps
+
+    def test_a_transient_failure_is_retried_with_backoff_and_then_succeeds(self):
+        v, Inner, sleeps = self.make(RuntimeError("DeepSeek HTTP 503: busy"), RuntimeError("DeepSeek HTTP 429: slow down"), {"ok": 1})
+        self.assertEqual(v.ask(b"x", "t", ["ok"]), {"ok": 1})
+        self.assertEqual((Inner.calls, sleeps), (3, [1.5, 3.0]))
+
+    def test_unusable_answers_are_retried_but_the_total_is_bounded(self):
+        v, Inner, sleeps = self.make(ValueError("DeepSeek returned non-JSON text"), attempts=3)
+        with self.assertRaisesRegex(ValueError, "non-JSON"):
+            v.ask(b"x", "t", ["ok"])
+        self.assertEqual((Inner.calls, len(sleeps)), (3, 2))
+
+    def test_permanent_problems_fail_at_once_with_the_original_error(self):
+        cases = [RuntimeError("DeepSeek HTTP 401: Authentication Fails"), RuntimeError("DeepSeek HTTP 402: Insufficient Balance"),
+                 RuntimeError("DeepSeek HTTP 400: bad request"), ValueError("Claude declined the request (category: cyber)"),
+                 ValueError("DeepSeek declined the request (content_filter)"), KeyError("bug in our code")]
+        for error in cases:
+            v, Inner, sleeps = self.make(error)
+            with self.assertRaises(type(error)):
+                v.ask(b"x", "t", ["ok"])
+            self.assertEqual((Inner.calls, sleeps), (1, []), repr(error))
+
+    def test_sdk_style_errors_are_recognised_by_status_or_name(self):
+        class RateLimit(Exception):
+            status_code = 429
+
+        class ReadTimeout(Exception):
+            pass
+
+        class Unauthorized(Exception):
+            status_code = 401
+
+        self.assertTrue(is_transient(RateLimit()))
+        self.assertTrue(is_transient(ReadTimeout()))
+        self.assertTrue(is_transient(TimeoutError()) and is_transient(ConnectionError()))
+        self.assertFalse(is_transient(Unauthorized()))
+        self.assertTrue(is_transient(RuntimeError("Gemini HTTP 500")))
+
+    def test_the_latency_of_the_last_call_is_recorded(self):
+        v, _, _ = self.make({"ok": 1})
+        v.ask(b"x", "t", ["ok"])
+        self.assertEqual(v.last_latency_s, 3.0)
+
+    def test_it_is_applied_by_default_and_can_be_switched_off(self):
+        wrapped = build_vision(Settings(vision_provider="deepseek", deepseek_api_key="d"))
+        self.assertIsInstance(wrapped, RetryingVision)
+        self.assertIsInstance(wrapped.inner, DeepSeekVision)
+        self.assertEqual(wrapped.attempts, 3)
+        self.assertIsInstance(build_vision(Settings(vision_provider="deepseek", deepseek_api_key="d", vision_attempts=1)), DeepSeekVision)
+
+
 class ProviderSelection(unittest.TestCase):
     def fake_anthropic(self):
         mod = types.ModuleType("anthropic")
@@ -292,7 +358,7 @@ class ProviderSelection(unittest.TestCase):
     def test_auto_without_gemini_key_uses_claude_with_settings(self):
         cfg = Settings(claude_model="claude-sonnet-5-5", claude_effort="medium", claude_fallbacks=False)
         with self.fake_anthropic():
-            v = build_vision(cfg)
+            v = build_backend(cfg)
         self.assertIsInstance(v, ClaudeVision)
         self.assertEqual((v._model, v._effort, v._fallbacks), ("claude-sonnet-5-5", "medium", False))
 
@@ -300,36 +366,36 @@ class ProviderSelection(unittest.TestCase):
         from xbox_agent.tools.gemini_vision import GeminiVision
 
         with self.fake_google():
-            self.assertIsInstance(build_vision(Settings(gemini_api_key="k")), GeminiVision)
+            self.assertIsInstance(build_backend(Settings(gemini_api_key="k")), GeminiVision)
 
     def test_explicit_provider_wins_over_a_gemini_key(self):
         with self.fake_anthropic():
-            self.assertIsInstance(build_vision(Settings(vision_provider="claude", gemini_api_key="k")), ClaudeVision)
+            self.assertIsInstance(build_backend(Settings(vision_provider="claude", gemini_api_key="k")), ClaudeVision)
 
     def test_auto_prefers_gemini_then_deepseek_then_claude(self):
-        self.assertIsInstance(build_vision(Settings(deepseek_api_key="d")), DeepSeekVision)
+        self.assertIsInstance(build_backend(Settings(deepseek_api_key="d")), DeepSeekVision)
         with self.fake_google():
             from xbox_agent.tools.gemini_vision import GeminiVision
 
-            self.assertIsInstance(build_vision(Settings(gemini_api_key="g", deepseek_api_key="d")), GeminiVision)
+            self.assertIsInstance(build_backend(Settings(gemini_api_key="g", deepseek_api_key="d")), GeminiVision)
         with self.fake_anthropic():
-            self.assertIsInstance(build_vision(Settings()), ClaudeVision)
+            self.assertIsInstance(build_backend(Settings()), ClaudeVision)
 
     def test_explicit_deepseek_uses_its_settings(self):
-        v = build_vision(Settings(vision_provider="deepseek", deepseek_api_key="d", deepseek_model="m",
+        v = build_backend(Settings(vision_provider="deepseek", deepseek_api_key="d", deepseek_model="m",
                                   deepseek_base_url="https://x/", deepseek_thinking="default"))
         self.assertEqual((v._model, v._url, v._send_thinking_off), ("m", "https://x/chat/completions", False))
         with self.assertRaisesRegex(ValueError, "DEEPSEEK_API_KEY"):
-            build_vision(Settings(vision_provider="deepseek"))
+            build_backend(Settings(vision_provider="deepseek"))
 
     def test_openai_and_typos_are_rejected(self):
         for bad in ("openai", "gemni"):
             with self.assertRaisesRegex(ValueError, "unknown vision provider"):
-                build_vision(Settings(vision_provider=bad))
+                build_backend(Settings(vision_provider=bad))
 
     def test_gemini_without_key_fails_fast(self):
         with self.assertRaisesRegex(ValueError, "GEMINI_API_KEY"):
-            build_vision(Settings(vision_provider="gemini"))
+            build_backend(Settings(vision_provider="gemini"))
 
 
 if __name__ == "__main__":

@@ -95,8 +95,11 @@ def default_checks(cfg: Settings) -> list[Check]:
 
         frame = need("frame", "capture")
         v = build_vision(cfg)
+        started = time.perf_counter()
         screen = vt.classify_screen(v, frame.png)  # a real API call: validates key, model and schema
-        return f"{type(v).__name__} answered, screen = '{screen}'"
+        took = time.perf_counter() - started
+        slow = " (slow: every step makes several calls, consider a faster model)" if took > 5 else ""
+        return f"{type(getattr(v, 'inner', v)).__name__} answered in {took:.1f}s{slow}, screen = '{screen}'"
 
     def dashboard() -> str:
         from .tools.dashboard import HttpDashboard

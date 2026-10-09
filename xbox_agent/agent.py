@@ -258,8 +258,15 @@ class XboxAgent:
             raise Escalation(ErrorCategory.STREAM_LOST, "black frame")
         return frame
 
-    def _classify(self, frame: Frame, *, allow: frozenset[str] = frozenset()) -> str:
+    def _classify(self, frame: Frame, *, allow: frozenset[str] = frozenset(), retries: int = 0) -> str:
+        """What is on screen. `retries` extra looks if the model says "unknown": a transition, a toast or a
+        loading animation usually passes within a second or two, and stopping the session for it is a waste."""
         screen = vt.classify_screen(self.t.vision, frame.png)
+        for _ in range(retries):
+            if screen != "unknown":
+                break
+            self.sleep(self.cfg.settle_s * 1.5)
+            screen = vt.classify_screen(self.t.vision, self._snap().png)
         if screen in vt.AUTH_BLOCKING and screen not in allow:
             raise Escalation(ErrorCategory.AUTH, f"{screen} screen: admin must handle it, agent will not type here")
         return screen
@@ -518,7 +525,7 @@ class XboxAgent:
         asked = False
         for _ in range(8):
             frame = self._snap()
-            screen = self._classify(frame)
+            screen = self._classify(frame, retries=self.cfg.second_looks)
             if screen == "login_code":
                 self._emit(ctx, State.REACH_LOGIN, "login_screen_reached", frame=frame)
                 return
@@ -538,10 +545,16 @@ class XboxAgent:
                 # A game is on screen (e.g. left at its title screen). Never decided silently: ask.
                 if not asked:
                     asked = True
-                    choice = self._ask(
-                        ctx, State.REACH_LOGIN, f"A game is on the console screen ('{screen}'). What should I do?",
-                        {"start_game": "Start the game (press A)", "close_game": "Close the game",
-                         "keep": "Leave it as it is and continue"}, frame)
+                    policy = self.cfg.on_game_running
+                    if policy == "ask":
+                        choice = self._ask(
+                            ctx, State.REACH_LOGIN, f"A game is on the console screen ('{screen}'). What should I do?",
+                            {"start_game": "Start the game (press A)", "close_game": "Close the game",
+                             "keep": "Leave it as it is and continue"}, frame)
+                    else:  # decided in advance by XBOX_AGENT_ON_GAME_RUNNING
+                        choice = {"start": "start_game", "close": "close_game", "keep": "keep"}[policy]
+                        self._emit(ctx, State.REACH_LOGIN, "auto_choice", params={"choice": choice}, frame=frame,
+                                   message=f"a game is on screen ('{screen}'); XBOX_AGENT_ON_GAME_RUNNING={policy}")
                     if choice == "start_game":
                         self._press(Button.A)
                         self.sleep(self.cfg.settle_s * 2)
@@ -572,6 +585,11 @@ class XboxAgent:
         """A profile is already signed in, so there is nothing to sign in. Ask the admin: use it (skip the
         sign-in code) or stop. Returns True if the admin chose to use it."""
         who = f" ({tag})" if tag else ""
+        if self.cfg.on_signed_in == "use":  # decided in advance by XBOX_AGENT_ON_SIGNED_IN
+            ctx.adopted, ctx.gamertag = True, tag
+            self._emit(ctx, State.REACH_LOGIN, "using_signed_in_profile", params={"gamertag": tag},
+                       message=f"continuing with the profile that is already signed in{who}; XBOX_AGENT_ON_SIGNED_IN=use")
+            return True
         note = f"A profile{who} is already signed in on the console, so there is no sign-in code to send."
         if self._escalate(ctx, State.REACH_LOGIN, Escalation(ErrorCategory.AUTH, note),
                           allow_skip=True, skip_label="use_profile") != "skip":
@@ -723,21 +741,24 @@ class XboxAgent:
         for label in path:
             self.nav.select(label_matcher(*label.split("|")), label.split("|")[0])
             self.sleep(self.cfg.settle_s)
-        screen = self._classify(self._snap())
+        screen = self._classify(self._snap(), retries=self.cfg.second_looks)
         if screen != expected:
             raise Escalation(ErrorCategory.UNKNOWN, f"expected '{expected}' screen, found '{screen}'")
 
     def _go_home(self) -> None:
         for _ in range(6):
-            if self._classify(self._snap()) == "home":
+            screen = self._classify(self._snap(), retries=self.cfg.second_looks)
+            if screen == "home":
                 return
+            if screen in ("game_main_menu", "game_loading"):
+                break  # B would press inside the game: go through the Guide instead
             self._press(Button.B)
             self.sleep(self.cfg.settle_s)
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
         self.nav.select(label_matcher(*self.cfg.home_labels), "Home")
         self.sleep(self.cfg.settle_s)
-        if self._classify(self._snap()) != "home":
+        if self._classify(self._snap(), retries=self.cfg.second_looks) != "home":
             raise Escalation(ErrorCategory.UNKNOWN, "cannot return to the home screen")
 
     # -- library / game
@@ -747,7 +768,7 @@ class XboxAgent:
         self.nav.select(label_matcher(*self.cfg.library_labels), "My games & apps")
         self.sleep(self.cfg.settle_s)
         frame = self._snap()
-        screen = self._classify(frame)
+        screen = self._classify(frame, retries=self.cfg.second_looks)
         if screen != "library":
             raise Escalation(ErrorCategory.UNKNOWN, f"expected library, found '{screen}'")
         self._emit(ctx, State.OPEN_LIBRARY, "library_open", frame=frame)

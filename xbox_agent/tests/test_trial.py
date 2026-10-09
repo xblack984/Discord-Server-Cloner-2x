@@ -183,6 +183,30 @@ class BrowserLaunch(unittest.TestCase):
         self.assertEqual((cfg.browser_profile, cfg.web_login_timeout_s), ("Profile 2", 120.0))
 
 
+class DecisionSettings(unittest.TestCase):
+    def test_values_are_validated_and_normalised(self):
+        for bad in ({"on_game_running": "maybe"}, {"on_game_running": "Start"}, {"on_signed_in": "keep"}):
+            with self.assertRaises(ValueError, msg=bad):
+                Settings(**bad)
+        with mock.patch.dict(os.environ, {"XBOX_AGENT_ON_GAME_RUNNING": " Keep ", "XBOX_AGENT_ON_SIGNED_IN": "USE",
+                                          "XBOX_AGENT_VISION_ATTEMPTS": "5", "XBOX_AGENT_SECOND_LOOKS": "0"}, clear=True):
+            cfg = Settings.from_env()
+        self.assertEqual((cfg.on_game_running, cfg.on_signed_in, cfg.vision_attempts, cfg.second_looks), ("keep", "use", 5, 0))
+
+    def test_a_typo_is_a_clear_message_not_a_traceback(self):
+        import io
+        from contextlib import redirect_stderr
+
+        from xbox_agent import __main__ as entry
+
+        err = io.StringIO()
+        with mock.patch.object(entry, "load_env_file"), mock.patch.dict(os.environ, {"XBOX_AGENT_ON_SIGNED_IN": "always"}, clear=True), \
+                redirect_stderr(err):
+            self.assertEqual(entry.main(["--once"]), 2)
+        self.assertIn("XBOX_AGENT_ON_SIGNED_IN", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+
 class StartupFailures(unittest.TestCase):
     def run_main(self, argv, **patches):
         import io

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
+from xbox_agent.config import Settings
 from xbox_agent.models import Button, Command, Escalation, display_code
 from xbox_agent.tests.fakes import Rig, RigTestCase
 
@@ -316,6 +317,73 @@ class Joystick(RigTestCase):
         self.idle_run(rig, ("press", {"button": "A"}))
         self.assertIn("manual_failed", [r["action"] for r in rig.reports()])
         self.assertEqual(rig.gamepad.taps, [])
+
+
+class DecidedInAdvance(RigTestCase):
+    """XBOX_AGENT_ON_GAME_RUNNING / ON_SIGNED_IN: decisions made once in .env instead of stopping every time."""
+
+    def run_until_login_wait(self, scene, **cfg):
+        rig = self.make_rig(scene=scene, **cfg)
+        abort_on(rig, "login_code", "error", "question")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.agent.run_once()
+        return rig
+
+    def test_keep_never_asks_and_says_what_it_decided(self):
+        rig = self.run_until_login_wait("game_signed_out", on_game_running="keep")
+        self.assertEqual(rig.dash.of("question"), [])
+        self.assertEqual(rig.gamepad.taps, [Button.GUIDE, Button.A, Button.DOWN, Button.A])
+        auto = [r for r in rig.reports() if r["action"] == "auto_choice"][0]
+        self.assertEqual(auto["params"], {"choice": "keep"})
+        self.assertIn("ON_GAME_RUNNING=keep", auto["message"])
+
+    def test_start_presses_A_and_close_quits_without_asking(self):
+        rig = self.run_until_login_wait("game_signed_out", on_game_running="start")
+        self.assertEqual(rig.gamepad.taps[0], Button.A)
+        self.assertEqual(rig.dash.of("question"), [])
+        rig = self.run_until_login_wait("game_quit_ok", on_game_running="close")
+        self.assertEqual(rig.gamepad.taps[:3], [Button.GUIDE, Button.DOWN, Button.A])
+        self.assertEqual(rig.dash.of("question"), [])
+
+    def test_use_continues_with_an_already_signed_in_profile_without_stopping(self):
+        rig = self.make_rig(scene="game_signed_in", on_game_running="keep", on_signed_in="use")
+        rig.console.signed_in = True
+        rig.dash.push("start_session", session_id="s1", stop_after="DETECT_LOGGED_IN", codes=[])
+        rig.agent.run_once()  # no abort, no answer, no skip: nobody is needed
+        self.assertEqual(rig.dash.of("error"), [])
+        self.assertEqual(rig.last_report()["status"], "stopped_early")
+        self.assertEqual(rig.last_report()["gamertag"], "AgentTest99")
+        self.assertIn("ON_SIGNED_IN=use", [r["message"] for r in rig.reports() if r["action"] == "using_signed_in_profile"][0])
+
+    def test_the_defaults_still_ask(self):
+        cfg = Settings()
+        self.assertEqual((cfg.on_game_running, cfg.on_signed_in), ("ask", "ask"))
+
+    def test_deletion_cannot_be_decided_in_advance(self):
+        # there is deliberately no setting that answers the profile-removal confirmation
+        self.assertFalse([f for f in Settings.__dataclass_fields__ if "delete" in f and f not in ("allow_delete", "delete_path", "delete_confirm_timeout_s")])
+
+
+class SecondLooks(RigTestCase):
+    def test_an_unrecognised_screen_gets_extra_looks_before_giving_up(self):
+        rig = self.make_rig(scene="connecting")  # shows "unknown" for the first two looks, then the sign-in screen
+        frame = rig.capture.grab()
+        self.assertEqual(rig.agent._classify(frame, retries=2), "sign_in_prompt")
+        rig = self.make_rig(scene="connecting")
+        self.assertEqual(rig.agent._classify(rig.capture.grab()), "unknown")  # no retries asked: unchanged behaviour
+        rig = self.make_rig(scene="connecting")
+        self.assertEqual(rig.agent._classify(rig.capture.grab(), retries=1), "unknown")  # one extra look is not enough
+
+    def test_credential_screens_are_still_refused_after_the_extra_looks(self):
+        rig = self.make_rig(scene="password_prompt")
+        with self.assertRaises(Escalation):
+            rig.agent._classify(rig.capture.grab(), retries=2)
+
+    def test_going_home_from_inside_a_game_uses_the_guide_and_never_presses_B(self):
+        rig = self.make_rig(scene="game_signed_in")
+        rig.agent._go_home()
+        self.assertEqual(rig.gamepad.taps, [Button.GUIDE, Button.A])  # Guide, then Home; B would have pressed inside the game
+        self.assertEqual(rig.console.scene, "home")
 
 
 class AlreadySignedIn(RigTestCase):
