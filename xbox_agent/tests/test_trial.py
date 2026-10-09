@@ -30,6 +30,17 @@ class EnvFile(unittest.TestCase):
             self.assertEqual(os.environ["KEEP"], "from_env")
             self.assertNotIn("BROKEN LINE", os.environ)
 
+    def test_a_repeated_key_takes_the_last_line_so_appending_overrides_the_template(self):
+        path = self.write("XBOX_AGENT_PLAY_URL=https://www.xbox.com/de-DE/play/consoles\nOTHER=1\n"
+                          "XBOX_AGENT_PLAY_URL=https://www.xbox.com/de-DE/play/consoles/launch/ABC\n")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            load_env_file(path)
+            self.assertEqual(os.environ["XBOX_AGENT_PLAY_URL"], "https://www.xbox.com/de-DE/play/consoles/launch/ABC")
+            self.assertEqual(Settings.from_env().play_url, "https://www.xbox.com/de-DE/play/consoles/launch/ABC")
+        with mock.patch.dict(os.environ, {"XBOX_AGENT_PLAY_URL": "https://from.env/"}, clear=True):
+            load_env_file(path)
+            self.assertEqual(os.environ["XBOX_AGENT_PLAY_URL"], "https://from.env/")  # the real environment still wins
+
     def test_missing_file_is_fine(self):
         load_env_file("/nonexistent/.env")  # must not raise
 
@@ -118,6 +129,8 @@ class BrowserLaunch(unittest.TestCase):
     def test_command_opens_a_new_window_and_only_for_http_urls(self):
         url = "https://www.xbox.com/de-DE/play/consoles"
         self.assertEqual(new_window_command("chrome.exe", url), ["chrome.exe", "--new-window", url])
+        direct = "https://www.xbox.com/de-DE/play/consoles/launch/EXAMPLE0CONSOLE0ID"  # a console's direct-launch link
+        self.assertEqual(new_window_command("msedge.exe", direct), ["msedge.exe", "--new-window", direct])
         for bad in ("file:///C:/secret.txt", "javascript:alert(1)", "--remote-debugging-port=1", "xbox.com"):
             with self.assertRaises(ValueError, msg=bad):
                 new_window_command("chrome.exe", bad)

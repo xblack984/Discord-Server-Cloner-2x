@@ -17,13 +17,15 @@ def _t(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def load_env_file(path: str | Path | None = None) -> None:
-    """Minimal .env reader: KEY=VALUE lines, '#' comments, optional quotes. Never overrides
-    variables already set in the real environment. Defaults to xbox_agent/.env (next to this
-    package, whatever the working directory) so it can't pick up another project's .env."""
+    """Minimal .env reader: KEY=VALUE lines, '#' comments, optional quotes. If a key appears twice in the
+    file the LAST line wins (so appending a line overrides the template's). Variables already set in the
+    real environment are never overridden. Defaults to xbox_agent/.env (next to this package, whatever the
+    working directory) so it can't pick up another project's .env."""
     try:
         lines = Path(path or Path(__file__).parent / ".env").read_text(encoding="utf-8").splitlines()
     except OSError:
         return
+    values: dict[str, str] = {}
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -32,7 +34,9 @@ def load_env_file(path: str | Path | None = None) -> None:
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
             value = value[1:-1]
-        os.environ.setdefault(key.strip(), value)
+        values[key.strip()] = value
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
 
 
 @dataclass
