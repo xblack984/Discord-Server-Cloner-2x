@@ -44,6 +44,18 @@ class SchemaSanity(unittest.TestCase):
         self.assertEqual(vt.SCHEMAS["screen"]["properties"]["screen"]["enum"], list(vt.SCREENS))
         self.assertIn("password_prompt", vt.SCREENS)
 
+    def test_the_classification_prompt_says_the_guide_counts_even_with_a_game_behind_it(self):
+        seen = []
+
+        class Recorder:
+            def ask(self, png, task, required_keys, schema=None):
+                seen.append(task)
+                return {"screen": "guide_menu", "confidence": 0.9}
+
+        self.assertEqual(vt.classify_screen(Recorder(), b"x"), "guide_menu")
+        self.assertIn("side panel", seen[0])
+        self.assertIn("game is still visible", seen[0])
+
     def test_tasks_send_their_schema_and_required_keys(self):
         seen = []
 

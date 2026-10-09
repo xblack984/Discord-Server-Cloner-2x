@@ -6,6 +6,8 @@ const $ = (sel) => document.querySelector(sel);
 const KEY = "xbox_agent_admin_token";
 let token = sessionStorage.getItem(KEY) || "";
 let timer = null;
+let questionKey = "";
+let liveTs = null;
 
 function show(node, on) { node.classList.toggle("hidden", !on); }
 function el(tag, props, ...kids) {
@@ -37,6 +39,7 @@ async function act(button, fn) {
 }
 
 const SKIP_LABELS = { use_profile: "استخدم هذا الحساب" };  // set by the agent when "skip" has a specific meaning
+const QUESTION_LABELS = { start_game: "ابدأ اللعبة (زر A)", close_game: "أغلق اللعبة", keep: "اتركها وتابع" };
 
 // ---- screenshots (fetched with the token, shown through blob URLs)
 const shots = new Map();
@@ -67,6 +70,20 @@ function render(st) {
   const notice = active ? s.notice : null;
   show($("#card-notice"), Boolean(notice));
   if (notice) { $("#notice-text").textContent = notice.message; showShot($("#notice-shot"), notice.shot); }
+
+  const q = active ? s.question : null;
+  show($("#card-question"), Boolean(q));
+  if (q) {
+    $("#q-text").textContent = q.message;
+    showShot($("#q-shot"), q.shot);
+    const key = JSON.stringify([q.message, q.options]);
+    if (key !== questionKey) {  // rebuild the buttons only when the question changed, so a click is never lost
+      questionKey = key;
+      $("#q-options").replaceChildren(...q.options.map((o, i) => el("button", {
+        class: i === 0 ? "primary" : "", onclick: (ev) => act(ev.currentTarget, () => api("/api/admin/answer", { choice: o.id })),
+      }, QUESTION_LABELS[o.id] || o.label)));
+    }
+  } else { questionKey = ""; }
 
   show($("#card-login"), active && Boolean(s.login_code));
   if (active && s.login_code) { $("#login-code").textContent = s.login_code; showShot($("#login-shot"), s.login_shot); }
@@ -99,12 +116,52 @@ function render(st) {
 
   show($("#btn-abort"), active);
 
+  const waiting = st.pad ? st.pad.waiting : 0;
+  $("#pad-status").textContent = `${waiting} أمر بانتظار الوكيل`;
+  show($("#pad-status"), waiting > 0);
+  if (st.live && st.live.ts && st.live.ts !== liveTs) { liveTs = st.live.ts; loadLive(); }
+
   $("#events").replaceChildren(...st.events.slice().reverse().map((e) => el("li", {},
     el("span", { class: "t" }, new Date(e.ts * 1000).toLocaleTimeString()),
     el("span", { class: "s" }, `${e.state || e.kind} / ${e.action}`),
     el("span", { class: "m" }, e.message),
     e.shot ? el("button", { onclick: () => showShot($("#event-shot"), e.shot) }, "صورة") : null)));
 }
+
+// ---- joystick
+let liveUrl = null;
+async function loadLive() {
+  const res = await call("/api/admin/live");
+  if (!res.ok) return;
+  const url = URL.createObjectURL(await res.blob());
+  $("#live-img").src = url;
+  show($("#live-img"), true);
+  show($("#live-empty"), false);
+  if (liveUrl) URL.revokeObjectURL(liveUrl);
+  liveUrl = url;
+}
+async function pad(action, value) {
+  try {
+    await api("/api/admin/pad", { action, value: value || null });
+    banner("");
+  } catch (e) { banner(e.message); return; }
+  for (const ms of [500, 1300, 2400]) setTimeout(refresh, ms);  // pick up the frame the agent posts after the press
+}
+document.querySelectorAll("[data-pad]").forEach((b) => b.addEventListener("click", () => {
+  const [action, value] = b.dataset.pad.split(":");
+  pad(action, value);
+}));
+const KEYS = { ArrowUp: "UP", ArrowDown: "DOWN", ArrowLeft: "LEFT", ArrowRight: "RIGHT", Enter: "A", Escape: "B",
+  Backspace: "B", x: "X", y: "Y", g: "GUIDE", m: "START", v: "BACK", q: "LB", e: "RB" };
+document.addEventListener("keydown", (ev) => {
+  if (!$("#pad-keys").checked || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const t = ev.target;  // typing in a text field must never press console buttons (the switch itself is an INPUT too)
+  if (t.tagName === "TEXTAREA" || t.tagName === "SELECT" || (t.tagName === "INPUT" && t.type !== "checkbox")) return;
+  const button = KEYS[ev.key] || KEYS[ev.key.toLowerCase()];
+  if (!button) return;
+  ev.preventDefault();
+  pad("press", button);
+});
 
 async function refresh() {
   if (!token) return;

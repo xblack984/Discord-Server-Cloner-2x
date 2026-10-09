@@ -19,12 +19,19 @@ from ..models import display_code, normalize_code
 
 MAX_CODES = 50
 AGENT_ONLINE_WITHIN_S = 20
-EVENT_KINDS = {"step", "login_code", "redeem_result", "error", "game_ready", "notice",
+EVENT_KINDS = {"step", "login_code", "redeem_result", "error", "game_ready", "notice", "question", "frame",
                "delete_profile_request", "session_report"}
 ADMIN_COMMANDS = {"admin_login_confirmed", "close_game", "retry", "skip", "abort_session",
                   "deny_delete_profile"}
 # Trial aid: stop the session cleanly after one of these states (the agent leaves the console as is)
 STOP_AFTER = ("SEND_CODE", "DETECT_LOGGED_IN", "REDEEM_CODES", "WAIT_GAME_READY")
+# The web joystick. Manual commands are only meaningful "now": the agent runs them when it is waiting, so
+# anything it did not pick up within MANUAL_TTL_S is dropped instead of firing later at a surprising moment.
+PAD_BUTTONS = ("A", "B", "X", "Y", "UP", "DOWN", "LEFT", "RIGHT", "GUIDE", "START", "BACK", "LB", "RB")
+STICK_DIRECTIONS = ("up", "down", "left", "right")
+MANUAL = frozenset({"press", "stick", "snapshot"})
+MANUAL_TTL_S = 15
+MAX_MANUAL_QUEUE = 20
 _SHOT_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
@@ -47,6 +54,7 @@ class Session:
     delete_request: dict[str, Any] | None = None  # {gamertag, token}; token stays server-side
     error: dict[str, Any] | None = None
     notice: dict[str, Any] | None = None  # "waiting for you" (e.g. sign in to Microsoft in the browser)
+    question: dict[str, Any] | None = None  # {message, options: [{id, label}], shot}: the agent wants a choice
     report: dict[str, Any] | None = None
 
 
@@ -61,6 +69,7 @@ class DashboardState:
         self.commands: list[dict[str, Any]] = []
         self.session: Session | None = None
         self.last_seen: float | None = None
+        self.live: tuple[float, bytes] | None = None  # latest screen frame from the agent (one slot, memory only)
         self._next_cmd = 0
 
     # ---------------------------------------------------------------- agent side
@@ -74,6 +83,9 @@ class DashboardState:
         out = []
         for c in self.commands:
             if c["status"] == "queued":
+                if c["type"] in MANUAL and self.clock() - c["ts"] > MANUAL_TTL_S:
+                    c["status"] = "expired"
+                    continue
                 c["status"] = "delivered"
                 out.append({"id": c["id"], "type": c["type"], "payload": dict(c["payload"])})
                 if c["type"] == "start_session":
@@ -105,14 +117,24 @@ class DashboardState:
         if kind not in EVENT_KINDS:
             raise Refused(400, f"unknown event kind '{kind}'")
         self.touch_agent()
+        if kind == "frame":  # live view: replaces the previous frame, never fills the screenshot store or the log
+            if image:
+                self.live = (self.clock(), image)
+            return
         shot = self.save_shot(image) if image else None
         sid = payload.get("session_id")
+        if kind in ("notice", "question") and not payload.get("message"):
+            self._apply(kind, payload, shot, sid)  # clearing a card is not an event worth listing
+            return
         self.events.append({
             "ts": self.clock(), "kind": kind, "session_id": sid, "shot": shot,
             "state": str(payload.get("state") or "")[:40],
             "action": str(payload.get("action") or kind)[:60],
             "message": str(payload.get("message") or "")[:500],
         })
+        self._apply(kind, payload, shot, sid)
+
+    def _apply(self, kind: str, payload: dict[str, Any], shot: str | None, sid: Any) -> None:
         s = self.session
         if not s or sid != s.id:  # idle heartbeats / stale events are only logged
             return
@@ -134,13 +156,18 @@ class DashboardState:
         elif kind == "notice":
             text = str(payload.get("message") or "")[:400]
             s.notice = {"message": text, "shot": shot} if text else None
+        elif kind == "question":
+            options = [{"id": str(o["id"])[:30], "label": str(o.get("label") or o["id"])[:80]}
+                       for o in (payload.get("options") or [])[:6] if isinstance(o, dict) and o.get("id")]
+            text = str(payload.get("message") or "")[:300]
+            s.question = {"message": text, "options": options, "shot": shot} if text and options else None
         elif kind == "game_ready":
             s.game_ready = True
         elif kind == "delete_profile_request":
             tag, token = str(payload.get("gamertag") or ""), str(payload.get("confirm_token") or "")
             s.delete_request = {"gamertag": tag[:60], "token": token} if tag and token else None
         elif kind == "session_report":
-            s.report, s.status, s.notice = payload, "ended", None
+            s.report, s.status, s.notice, s.question = payload, "ended", None, None
 
     # ---------------------------------------------------------------- admin side
 
@@ -206,12 +233,37 @@ class DashboardState:
                 raise Refused(409, "this error cannot be skipped")
             s.error = None
         elif type_ == "abort_session":
-            s.error = s.notice = None
+            s.error = s.notice = s.question = None
         elif type_ == "deny_delete_profile":
             if not s.delete_request:
                 raise Refused(409, "no profile deletion was requested")
             s.delete_request = None
         return self._enqueue(type_, {"session_id": s.id})
+
+    def answer(self, choice: str) -> dict[str, Any]:
+        s = self._active()
+        if not s.question:
+            raise Refused(409, "there is no question waiting for an answer")
+        if choice not in {o["id"] for o in s.question["options"]}:
+            raise Refused(400, "that is not one of the offered options")
+        s.question = None
+        return self._enqueue("answer", {"session_id": s.id, "choice": choice})
+
+    def pad(self, action: str, value: str | None = None) -> dict[str, Any]:
+        """A press / stick push / screenshot request from the web joystick."""
+        if action == "press" and value in PAD_BUTTONS:
+            payload: dict[str, Any] = {"button": value}
+        elif action == "stick" and value in STICK_DIRECTIONS:
+            payload = {"direction": value}
+        elif action == "snapshot":
+            payload = {}
+        else:
+            raise Refused(400, f"unknown joystick input: {action} {value}")
+        if sum(1 for c in self.commands if c["type"] in MANUAL and c["status"] == "queued") >= MAX_MANUAL_QUEUE:
+            raise Refused(429, "too many presses are waiting for the agent")
+        if self.session and self.session.status != "ended":
+            payload["session_id"] = self.session.id
+        return self._enqueue(action, payload)
 
     def confirm_delete(self, typed_gamertag: str) -> dict[str, Any]:
         s = self._active()
@@ -241,7 +293,9 @@ class DashboardState:
                 "id": s.id, "state": s.state, "status": s.status, "codes": s.codes,
                 "login_code": s.login_code, "login_shot": s.login_shot, "game_ready": s.game_ready,
                 "delete_request": None if not s.delete_request else {"gamertag": s.delete_request["gamertag"]},
-                "error": s.error, "notice": s.notice, "report": s.report},
+                "error": s.error, "notice": s.notice, "question": s.question, "report": s.report},
+            "live": {"ts": None if self.live is None else self.live[0]},
+            "pad": {"waiting": sum(1 for c in self.commands if c["type"] in MANUAL and c["status"] == "queued")},
             "commands": [{"id": c["id"], "type": c["type"], "status": c["status"], "ts": c["ts"]}
                          for c in self.commands[-15:]],
             "events": list(self.events)[-120:],

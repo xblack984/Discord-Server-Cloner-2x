@@ -133,6 +133,16 @@ def window_from_settings(cfg) -> Win32Window:
                        profile=cfg.browser_profile)
 
 
+# vgamepad.XUSB_BUTTON member for every Button (a test checks that none is missing)
+VGAMEPAD_NAMES: dict[Button, str] = {
+    Button.A: "XUSB_GAMEPAD_A", Button.B: "XUSB_GAMEPAD_B", Button.X: "XUSB_GAMEPAD_X", Button.Y: "XUSB_GAMEPAD_Y",
+    Button.UP: "XUSB_GAMEPAD_DPAD_UP", Button.DOWN: "XUSB_GAMEPAD_DPAD_DOWN",
+    Button.LEFT: "XUSB_GAMEPAD_DPAD_LEFT", Button.RIGHT: "XUSB_GAMEPAD_DPAD_RIGHT",
+    Button.GUIDE: "XUSB_GAMEPAD_GUIDE", Button.START: "XUSB_GAMEPAD_START", Button.BACK: "XUSB_GAMEPAD_BACK",
+    Button.LB: "XUSB_GAMEPAD_LEFT_SHOULDER", Button.RB: "XUSB_GAMEPAD_RIGHT_SHOULDER",
+}
+
+
 class VGamepad:
     """Virtual Xbox 360 pad (ViGEmBus). The browser sees it through the Gamepad API."""
 
@@ -141,14 +151,7 @@ class VGamepad:
 
         self._vg = vg
         self._pad = vg.VX360Gamepad()
-        b = vg.XUSB_BUTTON
-        self._map = {
-            Button.A: b.XUSB_GAMEPAD_A, Button.B: b.XUSB_GAMEPAD_B,
-            Button.X: b.XUSB_GAMEPAD_X, Button.Y: b.XUSB_GAMEPAD_Y,
-            Button.UP: b.XUSB_GAMEPAD_DPAD_UP, Button.DOWN: b.XUSB_GAMEPAD_DPAD_DOWN,
-            Button.LEFT: b.XUSB_GAMEPAD_DPAD_LEFT, Button.RIGHT: b.XUSB_GAMEPAD_DPAD_RIGHT,
-            Button.GUIDE: b.XUSB_GAMEPAD_GUIDE,
-        }
+        self._map = {button: getattr(vg.XUSB_BUTTON, name) for button, name in VGAMEPAD_NAMES.items()}
 
     def tap(self, button: Button) -> None:
         self._pad.press_button(button=self._map[button])

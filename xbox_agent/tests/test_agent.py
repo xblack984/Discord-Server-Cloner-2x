@@ -20,6 +20,19 @@ def codes():
             {"id": "c5", "code": "SHORT-CODE"}]
 
 
+def answer_questions(rig: Rig, choice: str, session_id: str = "s1") -> None:
+    """The admin picks `choice` whenever the agent asks a question on the dashboard."""
+    rig.dash.on_event["question"] = lambda p: p["message"] and rig.dash.push("answer", session_id=session_id, choice=choice)
+
+
+def abort_on(rig: Rig, *kinds: str, session_id: str = "s1") -> None:
+    """End the run once one of these events is posted (so the abort queues up after any scripted answer)."""
+    for kind in kinds:
+        previous = rig.dash.on_event.get(kind)
+        rig.dash.on_event[kind] = lambda p, previous=previous: (
+            previous(p) if previous else None, rig.dash.push("abort_session", session_id=session_id))[0]
+
+
 def script_full_session(rig: Rig) -> None:
     rig.console.outcomes = {GOOD: "redeemed", USED: "code_used", BAD: "code_invalid", WEIRD: "redeemed"}
     rig.console.weird = {WEIRD}
@@ -161,10 +174,11 @@ class StopAfter(RigTestCase):
 class GameOnScreen(RigTestCase):
     """The console was left on a game (e.g. Call of Duty at its title screen, no profile)."""
 
-    def run_until_login_wait(self, scene):
+    def run_until_login_wait(self, scene, answer="keep"):
         rig = self.make_rig(scene=scene)
+        answer_questions(rig, answer)
+        abort_on(rig, "login_code", "error")
         rig.dash.push("start_session", session_id="s1", codes=[])
-        rig.dash.push("abort_session", session_id="s1")  # ends the run at WAIT_ADMIN_LOGIN
         rig.agent.run_once()
         return rig
 
@@ -184,20 +198,142 @@ class GameOnScreen(RigTestCase):
         self.assertEqual(rig.window.reloads, 0)  # and did not mistake the end of the menu for a lost stream
 
 
+class AskAboutTheGame(RigTestCase):
+    """A game is on the console screen: the agent asks start / close / keep instead of guessing."""
+
+    def run_with_answer(self, scene, choice, **cfg):
+        rig = self.make_rig(scene=scene, **cfg)
+        answer_questions(rig, choice)
+        abort_on(rig, "login_code", "error")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.agent.run_once()
+        return rig
+
+    def test_it_asks_with_three_options_and_a_screenshot_before_pressing_anything(self):
+        rig = self.make_rig(scene="game_signed_out")
+        abort_on(rig, "question")  # nobody answers: the run ends at the question
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.agent.run_once()
+        q = rig.dash.of("question")[0]
+        self.assertEqual([o["id"] for o in q["options"]], ["start_game", "close_game", "keep"])
+        self.assertIn("game", q["message"].lower())
+        self.assertIsNotNone([img for k, p, img in rig.dash.events if k == "question"][0])
+        self.assertEqual(rig.gamepad.taps, [])
+
+    def test_start_the_game_presses_A_then_carries_on_with_the_guide(self):
+        rig = self.run_with_answer("game_signed_out", "start_game")
+        self.assertEqual(rig.gamepad.taps, [Button.A, Button.GUIDE, Button.A, Button.DOWN, Button.A])
+        self.assertEqual([p["code"] for p in rig.dash.of("login_code")], ["QX7M2K9P"])
+
+    def test_keep_goes_straight_to_the_guide(self):
+        rig = self.run_with_answer("game_signed_out", "keep")
+        self.assertEqual(rig.gamepad.taps, [Button.GUIDE, Button.A, Button.DOWN, Button.A])
+
+    def test_close_the_game_quits_it_through_the_guide_and_continues_to_the_sign_in(self):
+        rig = self.run_with_answer("game_quit_ok", "close_game")
+        self.assertEqual(rig.gamepad.taps[:3], [Button.GUIDE, Button.DOWN, Button.A])  # Guide, move to Quit, confirm
+        self.assertIn("game_closed", [r["action"] for r in rig.reports()])
+        self.assertEqual([p["code"] for p in rig.dash.of("login_code")], ["QX7M2K9P"])
+        self.assertEqual(rig.dash.of("error"), [])
+
+    def test_close_when_the_guide_shows_no_quit_hands_over_to_the_joystick_instead_of_guessing(self):
+        rig = self.run_with_answer("game_signed_out", "close_game")  # its Guide has only "Sign in"
+        err = rig.dash.of("error")[0]
+        self.assertIn("Quit", err["message"])
+        self.assertNotIn(Button.A, rig.gamepad.taps)  # it looked, it did not confirm anything
+
+    def test_an_answer_that_is_not_an_option_is_ignored_and_the_question_stays_open(self):
+        rig = self.make_rig(scene="game_signed_out")
+        rig.dash.on_event["question"] = lambda p: p["message"] and (
+            rig.dash.push("answer", session_id="s1", choice="format_the_console"),
+            rig.dash.push("answer", session_id="s1", choice="keep"))
+        abort_on(rig, "login_code")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.agent.run_once()
+        self.assertEqual(rig.gamepad.taps, [Button.GUIDE, Button.A, Button.DOWN, Button.A])  # acted on "keep" only
+        self.assertEqual([q["message"] for q in rig.dash.of("question")][-1], "")  # the card was cleared
+
+    def test_the_guide_is_pressed_once_only_because_it_toggles(self):
+        rig = self.run_with_answer("game_main_menu", "keep")  # its Guide is not the signed-out one: no sign-in entry
+        self.assertEqual(rig.gamepad.taps.count(Button.GUIDE), 1)
+
+
+class Joystick(RigTestCase):
+    """Presses sent from the web joystick are done whenever the agent is waiting, even with no session."""
+
+    def idle_run(self, rig, *commands):
+        for kind, payload in commands:
+            rig.dash.push(kind, **payload)
+        abort_on(rig, "login_code", "error")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.agent.run_once()
+
+    def test_presses_work_in_idle_and_open_the_page_first_if_needed(self):
+        rig = self.make_rig(scene="login_code")
+        self.idle_run(rig, ("press", {"button": "A"}), ("press", {"button": "GUIDE"}), ("press", {"button": "START"}))
+        self.assertEqual(rig.gamepad.taps[:3], [Button.A, Button.GUIDE, Button.START])
+        self.assertEqual(rig.window.opened, ["https://www.xbox.com/de-DE/play/consoles"])
+        self.assertTrue(set(rig.dash.acked) >= {"1", "2", "3"})  # every command was acknowledged
+
+    def test_a_stick_push_and_a_screenshot_request(self):
+        rig = self.make_rig(scene="login_code")
+        self.idle_run(rig, ("stick", {"direction": "up"}), ("stick", {"direction": "left"}), ("snapshot", {}))
+        self.assertEqual(rig.gamepad.sticks, [(0.0, 1.0, 0.3), (-1.0, 0.0, 0.3)])
+        self.assertEqual(rig.gamepad.taps, [])
+        frames = [(p, img) for k, p, img in rig.dash.events if k == "frame"]
+        self.assertGreaterEqual(len(frames), 3)
+        self.assertTrue(all(img for _, img in frames))
+
+    def test_malformed_or_unknown_commands_are_ignored_without_crashing(self):
+        rig = self.make_rig(scene="login_code")
+        self.idle_run(rig, ("press", {"button": "FORMAT"}), ("press", {}), ("stick", {"direction": "sideways"}),
+                      ("stick", {"direction": ["up"]}))
+        self.assertEqual((rig.gamepad.taps, rig.gamepad.sticks), ([], []))
+        self.assertEqual(rig.last_report()["status"], "aborted")  # and the session still ran normally
+
+    def test_commands_of_another_session_are_dropped(self):
+        rig = self.make_rig(scene="login_code")
+        abort_on(rig, "login_code")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.dash.push("press", session_id="OLD", button="A")
+        rig.dash.push("press", session_id="s1", button="B")
+        rig.agent.run_once()
+        self.assertEqual(rig.gamepad.taps, [Button.B])
+
+    def test_while_someone_is_driving_it_streams_frames_when_the_screen_changes(self):
+        rig = self.make_rig(scene="sign_in_prompt")
+        rig.dash.push("press", button="DOWN")
+        rig.dash.push("press", button="A")  # moves to "another device" and opens the code screen
+        abort_on(rig, "login_code", "error")
+        rig.dash.push("start_session", session_id="s1", codes=[])
+        rig.agent.run_once()
+        digests = {img for k, p, img in rig.dash.events if k == "frame"}
+        self.assertGreaterEqual(len(digests), 2)  # the picture changed between the two presses
+
+    def test_a_failing_press_is_reported_as_a_step_not_raised(self):
+        rig = self.make_rig()
+        rig.window.focusable = False
+        self.idle_run(rig, ("press", {"button": "A"}))
+        self.assertIn("manual_failed", [r["action"] for r in rig.reports()])
+        self.assertEqual(rig.gamepad.taps, [])
+
+
 class AlreadySignedIn(RigTestCase):
     """The console already has a profile signed in (its Guide shows it): the agent asks, then adopts it."""
 
     def adopt_rig(self, scene="game_signed_in", **cfg):
         rig = self.make_rig(scene=scene, **cfg)
+        answer_questions(rig, "keep")
         rig.console.signed_in = True
         rig.dash.on_event["error"] = lambda p: rig.dash.push("skip", session_id="s1")  # the admin clicks "use this profile"
         return rig
 
     def test_the_admin_is_asked_and_the_error_card_offers_use_this_profile(self):
         rig = self.make_rig(scene="game_signed_in")
+        answer_questions(rig, "keep")
+        abort_on(rig, "error")
         rig.console.signed_in = True
         rig.dash.push("start_session", session_id="s1", codes=[])
-        rig.dash.push("abort_session", session_id="s1")
         rig.agent.run_once()
         err = rig.dash.of("error")[0]
         self.assertEqual((err["category"], err["state"], err["can_skip"], err["skip_label"]),

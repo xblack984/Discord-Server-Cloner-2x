@@ -103,6 +103,22 @@ class InspectTool(RigTestCase):
             inspect_screen(rig.window, FakeCapture(rig.console), FakeOcr(), FakeVision())
 
 
+class GamepadTable(unittest.TestCase):
+    def test_every_button_the_joystick_can_send_has_a_vgamepad_mapping(self):
+        from xbox_agent.models import Button
+        from xbox_agent.tools.windows_input import VGAMEPAD_NAMES
+
+        self.assertEqual(set(VGAMEPAD_NAMES), set(Button))  # adding a Button without a mapping would crash at the first press
+        self.assertTrue(all(n.startswith("XUSB_GAMEPAD_") for n in VGAMEPAD_NAMES.values()))
+        self.assertEqual(len(set(VGAMEPAD_NAMES.values())), len(VGAMEPAD_NAMES))
+
+    def test_the_dashboard_joystick_offers_exactly_the_buttons_the_agent_knows(self):
+        from xbox_agent.dashboard.state import PAD_BUTTONS
+        from xbox_agent.models import Button
+
+        self.assertEqual(set(PAD_BUTTONS), {b.value for b in Button})
+
+
 class BrowserLaunch(unittest.TestCase):
     ENV = {"ProgramFiles": r"C:\PF", "ProgramFiles(x86)": r"C:\PF86", "LOCALAPPDATA": r"C:\Users\me\AppData\Local"}
 

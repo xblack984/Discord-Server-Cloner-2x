@@ -32,6 +32,29 @@ from .tools.protocols import (
 log = logging.getLogger("xbox_agent")
 
 BLACK_LUMA = 4.0
+MANUAL_TYPES = frozenset({"press", "stick", "snapshot"})  # the web joystick
+_STICK = {"up": (0.0, 1.0), "down": (0.0, -1.0), "left": (-1.0, 0.0), "right": (1.0, 0.0)}
+MANUAL_WINDOW_S = 90.0  # after a manual command the agent streams screen frames for this long
+LIVE_EVERY_S = 1.5
+LIVE_WIDTH = 960
+
+
+def _live_image(png: bytes) -> bytes:
+    """A small JPEG for the live view; the original bytes if the image cannot be re-encoded."""
+    try:
+        import io
+
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        if img.width > LIVE_WIDTH:
+            img = img.resize((LIVE_WIDTH, max(1, round(img.height * LIVE_WIDTH / img.width))))
+        out = io.BytesIO()
+        img.save(out, format="JPEG", quality=70)
+        return out.getvalue()
+    except Exception:
+        return png
+
 _ADOPTED_SKIPS = frozenset({State.EXTRACT_CODE, State.SEND_CODE, State.WAIT_ADMIN_LOGIN, State.LOGOUT,
                             State.REQUEST_DELETE_PROFILE, State.DELETE_PROFILE})
 _SKIP = object()
@@ -86,6 +109,8 @@ class XboxAgent:
         self._focused = False
         self._last_frame: Frame | None = None
         self._pending: list[Command] = []
+        self._manual_until = 0.0
+        self._live_digest: str | None = None
         self._dash_down_since: float | None = None
         self._dash_last_fail: float | None = None
         self._dash_warned_at: float | None = None
@@ -307,18 +332,22 @@ class XboxAgent:
         deadline = None if timeout is None else self.clock() + timeout
         last_tick = self.clock()
         while True:
+            manual = self._take_manual(ctx)
+            if manual:  # someone is driving from the web joystick: do it now, it is what they are waiting for
+                self._do_manual(ctx, manual)
+                continue
             cmd = self._take_pending(ctx, allowed)
             if cmd:
-                try:
-                    self.t.dashboard.ack(cmd)
-                except DashboardError:
-                    log.warning("ack failed for command %s", cmd.id)
+                self._ack(cmd)
                 if cmd.type == "abort_session":
                     raise SessionAborted("aborted by the dashboard")
                 return cmd
             if deadline is not None and self.clock() >= deadline:
                 return None
             wait = self.cfg.poll_interval_s
+            driving = self.clock() < self._manual_until
+            if driving:
+                wait = min(wait, LIVE_EVERY_S)
             if deadline is not None:
                 wait = max(0.0, min(wait, deadline - self.clock()))
             try:
@@ -327,9 +356,76 @@ class XboxAgent:
             except DashboardError as e:
                 self._dash_failed(e)
                 self.sleep(self.cfg.poll_interval_s)
+            if driving and not any(c.type in MANUAL_TYPES for c in self._pending):
+                self._post_live_frame(ctx, only_if_changed=True)
             if on_tick and self.clock() - last_tick >= self.cfg.heartbeat_s:
                 last_tick = self.clock()
                 on_tick()
+
+    def _ack(self, cmd: Command) -> None:
+        try:
+            self.t.dashboard.ack(cmd)
+        except DashboardError:
+            log.warning("ack failed for command %s", cmd.id)
+
+    def _take_manual(self, ctx: Session | None) -> Command | None:
+        for cmd in list(self._pending):
+            if cmd.type not in MANUAL_TYPES:
+                continue
+            self._pending.remove(cmd)
+            sid = cmd.payload.get("session_id")
+            if ctx and sid and sid != ctx.id:  # stale: belongs to another session
+                continue
+            return cmd
+        return None
+
+    def _do_manual(self, ctx: Session | None, cmd: Command) -> None:
+        """One press / stick push / screenshot asked for from the web joystick. Never raises."""
+        self._manual_until = self.clock() + MANUAL_WINDOW_S
+        try:
+            if self.cfg.open_play_url and self.cfg.play_url and self.t.window.ensure_open(self.cfg.play_url):
+                self.sleep(self.cfg.page_load_s)  # the first command may come before any session
+            if cmd.type == "press":
+                self._press(Button(str(cmd.payload.get("button"))))
+            elif cmd.type == "stick":
+                x, y = _STICK[str(cmd.payload.get("direction"))]
+                self._ensure_focus()
+                self.t.gamepad.stick(x, y, 0.3)
+            if cmd.type != "snapshot":
+                self.sleep(self.cfg.settle_s * 0.6)
+            self._post_live_frame(ctx)
+        except (ValueError, KeyError):
+            log.warning("ignored a malformed joystick command: %s %s", cmd.type, cmd.payload)
+        except Exception as e:
+            self._emit(ctx, self.state, "manual_failed", message=f"joystick command failed: {e}")
+        finally:
+            self._ack(cmd)
+
+    def _post_live_frame(self, ctx: Session | None, *, only_if_changed: bool = False) -> None:
+        try:
+            frame = self.t.capture.grab()  # not _snap(): no focus change, no key
+        except Exception:
+            return
+        if only_if_changed and frame.digest == self._live_digest:
+            return
+        self._live_digest = frame.digest
+        self._post("frame", {"session_id": ctx.id if ctx else None}, _live_image(frame.png))
+
+    def _ask(self, ctx: Session, state: State, message: str, options: dict[str, str], frame: Frame | None) -> str:
+        """Put a question with buttons on the dashboard and wait for the admin's pick."""
+        self._post("question", {"session_id": ctx.id, "state": state.value, "message": message,
+                                "options": [{"id": k, "label": v} for k, v in options.items()]},
+                   frame.png if frame else None)
+        self._emit(ctx, state, "ask", params={"options": list(options)}, message=message, need_confirmation=True,
+                   next_expected_event="answer", frame=frame, send_image=False)
+        while True:
+            cmd = self._wait_command(ctx, {"answer"}, None)
+            assert cmd is not None
+            choice = str(cmd.payload.get("choice"))
+            if choice in options:
+                self._post("question", {"session_id": ctx.id, "message": ""})  # clears the card
+                return choice
+            log.warning("ignored an answer that is not one of %s", list(options))
 
     def _take_pending(self, ctx: Session | None, allowed: set[str]) -> Command | None:
         for cmd in list(self._pending):
@@ -419,6 +515,7 @@ class XboxAgent:
 
     def _reach_login(self, ctx: Session) -> None:
         guide_presses = 0
+        asked = False
         for _ in range(8):
             frame = self._snap()
             screen = self._classify(frame)
@@ -438,11 +535,25 @@ class XboxAgent:
                 self.sleep(self.cfg.settle_s)
                 continue
             if screen in ("game_main_menu", "game_loading"):
-                # A game is on screen (e.g. left at its title screen, no profile). Don't quit it: the Guide
-                # offers the sign-in from on top of the game.
-                if guide_presses >= 2:
+                # A game is on screen (e.g. left at its title screen). Never decided silently: ask.
+                if not asked:
+                    asked = True
+                    choice = self._ask(
+                        ctx, State.REACH_LOGIN, f"A game is on the console screen ('{screen}'). What should I do?",
+                        {"start_game": "Start the game (press A)", "close_game": "Close the game",
+                         "keep": "Leave it as it is and continue"}, frame)
+                    if choice == "start_game":
+                        self._press(Button.A)
+                        self.sleep(self.cfg.settle_s * 2)
+                        continue
+                    if choice == "close_game":
+                        self._quit_running_game(ctx, State.REACH_LOGIN)
+                        continue
+                # The Guide opens over the game and offers the sign-in. It toggles, so it is pressed once only.
+                if guide_presses >= 1:
                     raise Escalation(ErrorCategory.UNKNOWN,
-                                     f"a game is on screen ('{screen}') and the Guide did not lead to a sign-in")
+                                     f"a game is on screen ('{screen}') and the Guide did not lead to a sign-in; "
+                                     "use the joystick panel, then press retry")
                 guide_presses += 1
                 self._emit(ctx, State.REACH_LOGIN, "open_guide", frame=frame,
                            message=f"a game is on screen ('{screen}'); opening the Guide to sign in")
@@ -682,6 +793,9 @@ class XboxAgent:
         assert cmd is not None
 
     def _close_game(self, ctx: Session) -> None:
+        self._quit_running_game(ctx, State.CLOSE_GAME)
+
+    def _quit_running_game(self, ctx: Session, state: State) -> None:
         self._press(Button.GUIDE)
         self.sleep(self.cfg.settle_s)
         self.nav.select(label_matcher(*self.cfg.quit_labels), "Quit")
@@ -692,7 +806,7 @@ class XboxAgent:
             if screen == "confirm_dialog":
                 self.nav.select(label_matcher(*self.cfg.quit_labels, "yes", "ja", "confirm", "bestätigen", "نعم"), "quit confirmation")
             elif screen not in ("game_main_menu", "game_loading", "unknown"):
-                self._emit(ctx, State.CLOSE_GAME, "game_closed", frame=frame)
+                self._emit(ctx, state, "game_closed", frame=frame)
                 return
         raise Escalation(ErrorCategory.GAME_STUCK, "game still running after Quit")
 

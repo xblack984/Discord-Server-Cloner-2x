@@ -45,6 +45,13 @@
       <img id="notice-shot" class="shot hidden" alt="">
     </section>
 
+    <section id="card-question" class="card attention hidden">
+      <h2>الوكيل يسألك</h2>
+      <p id="q-text"></p>
+      <img id="q-shot" class="shot hidden" alt="">
+      <div id="q-options" class="row"></div>
+    </section>
+
     <section id="card-login" class="card attention hidden">
       <h2>كود الدخول على الكونسول</h2>
       <p>أدخل هذا الكود بحساب Microsoft من جهازك، ثم اضغط التأكيد.</p>
@@ -89,6 +96,51 @@
     <section id="card-report" class="card hidden">
       <h2>التقرير النهائي</h2>
       <pre id="report" dir="ltr"></pre>
+    </section>
+
+    <section id="card-pad" class="card">
+      <h2>يد التحكم</h2>
+      <p>الأزرار تُرسل إلى كونسولك الحقيقي. يُنفّذها الوكيل حين يكون بانتظارك (عند سؤال أو خطأ أو انتظار)،
+         وليس أثناء تنقّله الآلي. والأمر الذي لا يلتقطه خلال 15 ثانية يُلغى.</p>
+      <div class="live">
+        <img id="live-img" class="shot hidden" alt="">
+        <div id="live-empty" class="live-empty">لا توجد صورة بعد. اضغط «تحديث الشاشة» أو أي زر.</div>
+      </div>
+      <div class="row">
+        <button data-pad="snapshot">تحديث الشاشة</button>
+        <span id="pad-status" class="chip hidden"></span>
+        <label class="inline"><input type="checkbox" id="pad-keys"> تحكّم بلوحة المفاتيح</label>
+      </div>
+      <div id="pad" class="pad" dir="ltr">
+        <div class="pad-top">
+          <button data-pad="press:LB">LB</button>
+          <button data-pad="press:BACK" title="View">&#10064;</button>
+          <button data-pad="press:GUIDE" class="xbox" title="Guide">Xbox</button>
+          <button data-pad="press:START" title="Menu">&#9776;</button>
+          <button data-pad="press:RB">RB</button>
+        </div>
+        <div class="pad-main">
+          <div class="cross dpad" aria-label="D-pad">
+            <button data-pad="press:UP" class="n">&#9650;</button>
+            <button data-pad="press:LEFT" class="w">&#9664;</button>
+            <button data-pad="press:RIGHT" class="e">&#9654;</button>
+            <button data-pad="press:DOWN" class="s">&#9660;</button>
+          </div>
+          <div class="cross stick" aria-label="Left stick">
+            <button data-pad="stick:up" class="n">&#8593;</button>
+            <button data-pad="stick:left" class="w">&#8592;</button>
+            <button data-pad="stick:right" class="e">&#8594;</button>
+            <button data-pad="stick:down" class="s">&#8595;</button>
+            <span class="cap">L stick</span>
+          </div>
+          <div class="cross face" aria-label="Buttons">
+            <button data-pad="press:Y" class="n y">Y</button>
+            <button data-pad="press:X" class="w x">X</button>
+            <button data-pad="press:B" class="e b">B</button>
+            <button data-pad="press:A" class="s a">A</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="card">

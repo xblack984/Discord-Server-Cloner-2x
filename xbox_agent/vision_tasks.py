@@ -84,7 +84,9 @@ def classify_screen(v: Vision, png: bytes) -> str:
         _PREAMBLE + 'Classify the screen. Schema: {"screen": one of ' + str(list(SCREENS))
         + ', "confidence": 0..1}. If unsure use "unknown". Notes: "play_consoles" is the xbox.com web page that '
         'lists your consoles with a connect button; "web_sign_in" is a Microsoft sign-in web page asking for an '
-        'email, password or code; every other value is a screen of the console itself.',
+        'email, password or code; "guide_menu" is the Xbox Guide side panel (a row of tab icons, then entries such as '
+        'Home and My games & apps) and it counts as the Guide even when a game is still visible behind or beside it; '
+        'every other value is a screen of the console itself.',
         "screen",
     )
     screen = str(out.get("screen", "unknown"))

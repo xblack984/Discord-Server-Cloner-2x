@@ -21,6 +21,7 @@ SCREEN = {
     "play_consoles": "play_consoles", "connecting": "unknown", "web_sign_in": "web_sign_in", "error_page": "error",
     "game_signed_out": "game_main_menu", "guide_signed_out": "guide_menu",
     "game_signed_in": "game_main_menu", "guide_signed_in": "guide_menu",
+    "game_quit_ok": "game_main_menu", "guide_with_quit": "guide_menu",
 }
 RESULT_TEXT = {
     "redeemed": "Successfully redeemed! Enjoy your game",
@@ -63,6 +64,7 @@ class FakeConsole:
             "play_consoles": ["Meine Konsole", "Verbinden"],
             "guide_signed_out": ["Sign in"],
             "guide_signed_in": ["Home", "My games & apps"],
+            "guide_with_quit": ["Home", "Quit"],
             "home": ["My games & apps", "Store"],
             "store": ["Games", "Redeem a code"],
             "library": ["Call of Duty: Modern Warfare II", "Call of Duty: Modern Warfare", "Forza Horizon"],
@@ -85,7 +87,8 @@ class FakeConsole:
     def press(self, b: Button) -> None:
         s = self.scene
         if b is Button.GUIDE:
-            return self._go({"game_signed_out": "guide_signed_out", "game_signed_in": "guide_signed_in"}.get(s, "guide_menu"))
+            return self._go({"game_signed_out": "guide_signed_out", "game_signed_in": "guide_signed_in",
+                             "game_quit_ok": "guide_with_quit"}.get(s, "guide_menu"))
         if b is Button.B:
             if s not in ("game_loading", "game_main_menu"):
                 self._go("home")
@@ -110,6 +113,7 @@ class FakeConsole:
             ("sign_in_prompt", "Sign in on another device"): "login_code",
             ("guide_signed_out", "Sign in"): "sign_in_prompt",
             ("guide_signed_in", "Home"): "home",
+            ("guide_with_quit", "Quit"): "sign_in_prompt",
             ("home", "My games & apps"): "library", ("home", "Store"): "store",
             ("guide_menu", "Home"): "home", ("guide_menu", "Store"): "store",
             ("guide_menu", "Profile & system"): "profile_menu", ("guide_menu", "Quit"): "quit_confirm",
@@ -173,14 +177,14 @@ class FakeConsole:
 
 class FakeGamepad:
     def __init__(self, console: FakeConsole):
-        self.console, self.taps = console, []
+        self.console, self.taps, self.sticks = console, [], []
 
     def tap(self, button: Button) -> None:
         self.taps.append(button)
         self.console.press(button)
 
     def stick(self, x: float, y: float, duration_s: float) -> None:
-        pass
+        self.sticks.append((x, y, duration_s))
 
 
 class FakeClipboard:

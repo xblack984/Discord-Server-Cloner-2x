@@ -40,3 +40,21 @@ td.code { font-family: ui-monospace, Consolas, monospace; direction: ltr; }
 #events .t { color: var(--muted); direction: ltr; min-width: 64px; } #events .s { min-width: 150px; direction: ltr; }
 #events .m { flex: 1; color: var(--muted); } #events button { padding: 0 8px; font-size: 12px; }
 footer { padding-bottom: 32px; }
+
+/* ---- joystick */
+.live { margin: 8px 0; }
+.live-empty { padding: 28px 12px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; }
+label.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+label.inline input { width: auto; margin: 0; }
+.pad { display: grid; gap: 14px; max-width: 640px; margin: 10px auto 0; user-select: none; }
+.pad button { min-width: 48px; min-height: 44px; font-weight: 700; touch-action: manipulation; }
+.pad button:active { transform: scale(.94); }
+.pad-top { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.pad-top .xbox { background: var(--primary); border-color: var(--primary); color: var(--primary-text); border-radius: 99px; padding: 0 18px; }
+.pad-main { display: flex; gap: 22px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.cross { display: grid; grid-template: "a n b" 1fr "w c e" 1fr "d s f" 1fr / 1fr 1fr 1fr; gap: 6px; width: 168px; position: relative; }
+.cross .n { grid-area: n; } .cross .w { grid-area: w; } .cross .e { grid-area: e; } .cross .s { grid-area: s; }
+.cross .cap { grid-area: c; align-self: center; justify-self: center; font-size: 11px; color: var(--muted); }
+.face button { border-radius: 99px; min-height: 48px; }
+.face .a { color: #2fb344; } .face .b { color: #f04438; } .face .x { color: #2e90fa; } .face .y { color: #fdb022; }
+.stick button { border-radius: 99px; }

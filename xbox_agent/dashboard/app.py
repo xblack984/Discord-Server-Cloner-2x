@@ -44,6 +44,15 @@ class DeleteConfirm(BaseModel):
     gamertag: str
 
 
+class Answer(BaseModel):
+    choice: str
+
+
+class Pad(BaseModel):
+    action: str
+    value: str | None = None
+
+
 def create_app(agent_token: str, admin_token: str, shots_dir: str | Path = "dashboard_shots") -> FastAPI:
     if not agent_token or not admin_token:
         raise ValueError("both the agent token and the admin token are required")
@@ -125,6 +134,21 @@ def create_app(agent_token: str, admin_token: str, shots_dir: str | Path = "dash
     @app.post("/api/admin/delete/confirm", dependencies=[Depends(admin_auth)])
     async def admin_delete_confirm(body: DeleteConfirm) -> dict[str, str]:
         return {"command_id": state.confirm_delete(body.gamertag)["id"]}
+
+    @app.post("/api/admin/answer", dependencies=[Depends(admin_auth)])
+    async def admin_answer(body: Answer) -> dict[str, str]:
+        return {"command_id": state.answer(body.choice)["id"]}
+
+    @app.post("/api/admin/pad", dependencies=[Depends(admin_auth)])
+    async def admin_pad(body: Pad) -> dict[str, str]:
+        return {"command_id": state.pad(body.action, body.value)["id"]}
+
+    @app.get("/api/admin/live", dependencies=[Depends(admin_auth)])
+    async def admin_live() -> Response:
+        if state.live is None:
+            raise HTTPException(404, "no frame yet")
+        _, frame = state.live
+        return Response(frame, media_type="image/jpeg" if frame[:2] == b"\xff\xd8" else "image/png")
 
     @app.post("/api/admin/session/reset", dependencies=[Depends(admin_auth)])
     async def admin_reset() -> dict[str, bool]:

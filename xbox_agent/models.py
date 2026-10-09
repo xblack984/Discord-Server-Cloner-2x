@@ -58,6 +58,10 @@ class Button(str, Enum):
     LEFT = "LEFT"
     RIGHT = "RIGHT"
     GUIDE = "GUIDE"
+    START = "START"  # the Menu button (three lines)
+    BACK = "BACK"  # the View button (two windows)
+    LB = "LB"
+    RB = "RB"
 
 
 @dataclass(frozen=True)

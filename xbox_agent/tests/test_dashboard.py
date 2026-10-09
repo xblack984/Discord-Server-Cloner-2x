@@ -9,6 +9,7 @@ import time
 import unittest
 from unittest import mock
 
+from xbox_agent.models import Button
 from xbox_agent.tests.fakes import Rig, RigTestCase
 
 HAS_WEB = all(importlib.util.find_spec(m) for m in ("fastapi", "httpx", "multipart", "uvicorn"))
@@ -61,6 +62,7 @@ class DashboardApi(unittest.TestCase):
             self.assertEqual(getattr(self.client, method)(path, headers=self.m).status_code, 401, path)  # admin token != agent
         for method, path in [("get", "/api/admin/state"), ("post", "/api/admin/session"), ("post", "/api/admin/command"),
                              ("post", "/api/admin/delete/confirm"), ("post", "/api/admin/session/reset"),
+                             ("post", "/api/admin/answer"), ("post", "/api/admin/pad"), ("get", "/api/admin/live"),
                              ("get", "/api/admin/shots/" + "a" * 32)]:
             self.assertEqual(getattr(self.client, method)(path).status_code, 401, path)
             self.assertEqual(getattr(self.client, method)(path, headers=self.a).status_code, 401, path)  # agent token != admin
@@ -129,6 +131,103 @@ class DashboardApi(unittest.TestCase):
         self.assertEqual(self.admin("skip").status_code, 200)
         js = self.client.get("/static/app.js").text
         self.assertIn("use_profile", js)  # the UI knows how to label it
+
+    # ---- the agent asks a question
+    def test_question_with_options_is_answered_once_and_validated(self):
+        sid = self.start()
+        self.assertEqual(self.client.post("/api/admin/answer", json={"choice": "keep"}, headers=self.m).status_code, 409)
+        opts = [{"id": "start_game", "label": "Start"}, {"id": "close_game", "label": "Close"}, {"id": "keep", "label": "Keep"}]
+        self.event("question", {"message": "A game is on screen", "options": opts}, image=b"png", sid=sid)
+        q = self.state()["session"]["question"]
+        self.assertEqual((q["message"], [o["id"] for o in q["options"]]), ("A game is on screen", ["start_game", "close_game", "keep"]))
+        self.assertTrue(q["shot"])
+        bad = self.client.post("/api/admin/answer", json={"choice": "format_console"}, headers=self.m)
+        self.assertEqual(bad.status_code, 400)
+        self.assertIsNotNone(self.state()["session"]["question"])  # a refused answer leaves the question open
+        self.fetch()
+        ok = self.client.post("/api/admin/answer", json={"choice": "close_game"}, headers=self.m)
+        self.assertEqual(ok.status_code, 200)
+        cmd = self.fetch()[0]
+        self.assertEqual((cmd["type"], cmd["payload"]), ("answer", {"session_id": sid, "choice": "close_game"}))
+        self.assertIsNone(self.state()["session"]["question"])
+        self.assertEqual(self.client.post("/api/admin/answer", json={"choice": "keep"}, headers=self.m).status_code, 409)
+
+    def test_a_blank_message_clears_the_question_without_a_log_line_and_abort_clears_it_too(self):
+        sid = self.start()
+        opts = [{"id": "keep", "label": "Keep"}]
+        self.event("question", {"message": "Q1", "options": opts}, sid=sid)
+        before = len(self.state()["events"])
+        self.event("question", {"message": "", "options": []}, sid=sid)
+        st = self.state()
+        self.assertIsNone(st["session"]["question"])
+        self.assertEqual(len(st["events"]), before)  # clearing is not an event
+        self.event("question", {"message": "Q2", "options": opts}, sid=sid)
+        self.admin("abort_session")
+        self.assertIsNone(self.state()["session"]["question"])
+
+    def test_a_question_without_options_is_not_shown(self):
+        sid = self.start()
+        self.event("question", {"message": "Q", "options": []}, sid=sid)
+        self.assertIsNone(self.state()["session"]["question"])
+
+    # ---- the web joystick
+    def pad(self, action, value=None):
+        return self.client.post("/api/admin/pad", json={"action": action, "value": value}, headers=self.m)
+
+    def test_joystick_inputs_are_an_allowlist(self):
+        for ok in (("press", b) for b in ("A", "B", "X", "Y", "UP", "DOWN", "LEFT", "RIGHT", "GUIDE", "START", "BACK", "LB", "RB")):
+            self.assertEqual(self.pad(*ok).status_code, 200, ok)
+        for ok in (("stick", d) for d in ("up", "down", "left", "right")):
+            self.assertEqual(self.pad(*ok).status_code, 200, ok)
+        self.assertEqual(self.pad("snapshot").status_code, 200)
+        for bad in (("press", "FORMAT"), ("press", "a"), ("press", None), ("stick", "UP"), ("stick", "sideways"),
+                    ("start_session", None), ("confirm_delete_profile", "x"), ("", "")):
+            self.assertEqual(self.pad(*bad).status_code, 400, bad)
+
+    def test_joystick_commands_work_without_a_session_and_carry_the_session_when_there_is_one(self):
+        self.assertEqual(self.pad("press", "A").status_code, 200)
+        cmd = self.fetch()[0]
+        self.assertEqual((cmd["type"], cmd["payload"]), ("press", {"button": "A"}))
+        sid = self.start()
+        self.fetch()
+        self.pad("stick", "left")
+        cmd = self.fetch()[0]
+        self.assertEqual((cmd["type"], cmd["payload"]), ("stick", {"direction": "left", "session_id": sid}))
+
+    def test_a_press_the_agent_did_not_pick_up_in_time_is_dropped_not_fired_later(self):
+        dash = self.client.app.state.dash
+        now = [1000.0]
+        dash.clock = lambda: now[0]
+        self.pad("press", "A")
+        now[0] += 16  # the agent was busy navigating for longer than MANUAL_TTL_S
+        self.pad("press", "B")
+        cmds = self.fetch()
+        self.assertEqual([c["payload"] for c in cmds], [{"button": "B"}])
+        self.assertEqual([c["status"] for c in self.state()["commands"]][:2], ["expired", "delivered"])
+
+    def test_the_joystick_queue_is_bounded_and_reported(self):
+        for _ in range(20):
+            self.assertEqual(self.pad("press", "DOWN").status_code, 200)
+        self.assertEqual(self.pad("press", "DOWN").status_code, 429)
+        self.assertEqual(self.state()["pad"]["waiting"], 20)
+        self.fetch()
+        self.assertEqual(self.state()["pad"]["waiting"], 0)
+
+    def test_live_frames_replace_each_other_and_stay_out_of_the_log_and_the_screenshot_store(self):
+        self.assertEqual(self.client.get("/api/admin/live", headers=self.m).status_code, 404)
+        self.assertIsNone(self.state()["live"]["ts"])
+        jpeg, png = b"\xff\xd8\xff-first", b"\x89PNG-second"
+        self.event("frame", {"session_id": None}, image=jpeg)
+        r = self.client.get("/api/admin/live", headers=self.m)
+        self.assertEqual((r.status_code, r.content, r.headers["content-type"]), (200, jpeg, "image/jpeg"))
+        ts1 = self.state()["live"]["ts"]
+        self.event("frame", {}, image=png)
+        r = self.client.get("/api/admin/live", headers=self.m)
+        self.assertEqual((r.content, r.headers["content-type"]), (png, "image/png"))
+        self.assertIsNotNone(ts1)
+        st = self.state()
+        self.assertEqual(st["events"], [])  # 2 frames and no log lines
+        self.assertEqual(len(list(self.client.app.state.dash.shots_dir.glob("*.png"))), 0)
 
     def test_waiting_for_you_notice_is_shown_then_cleared(self):
         sid = self.start()
@@ -280,6 +379,56 @@ class RealAgentAgainstRealDashboard(RigTestCase):
 
         self.addCleanup(stop)
         return f"http://127.0.0.1:{server.servers[0].sockets[0].getsockname()[1]}"
+
+    def test_joystick_press_a_question_and_its_answer_over_real_http(self):
+        import httpx
+
+        from xbox_agent.tools.dashboard import HttpDashboard
+
+        url = self.start_server()
+        dash = HttpDashboard(url, AGENT, retries=1)
+        self.addCleanup(dash.close)
+        rig = Rig(scene="game_signed_out", dashboard=dash)
+        self.addCleanup(rig.close)
+        admin = httpx.Client(base_url=url, headers={"X-Admin-Token": ADMIN}, timeout=10)
+        self.addCleanup(admin.close)
+        errors: list[str] = []
+
+        def run_agent():
+            try:
+                rig.agent.run_once()
+            except Exception as e:
+                errors.append(repr(e))
+
+        agent_thread = threading.Thread(target=run_agent, daemon=True)
+        agent_thread.start()
+
+        def wait_for(pred, what, timeout=30.0):
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                value = pred()
+                if value:
+                    return value
+                time.sleep(0.1)
+            admin.post("/api/admin/command", json={"type": "abort_session"})
+            raise AssertionError(f"timed out waiting for {what}")
+
+        # 1) a press from the web joystick with no session running, then the live frame it produced
+        self.assertEqual(admin.post("/api/admin/pad", json={"action": "press", "value": "A"}).status_code, 200)
+        wait_for(lambda: rig.gamepad.taps == [Button.A], "the joystick press")
+        live = wait_for(lambda: (r := admin.get("/api/admin/live")).status_code == 200 and r, "the live frame")
+        self.assertTrue(live.content)
+        # 2) a session: the agent asks about the game on screen, the web answers
+        admin.post("/api/admin/session", json={"codes": ""})
+        state = wait_for(lambda: (st := admin.get("/api/admin/state").json())["session"] and st["session"]["question"] and st, "the question")
+        self.assertEqual([o["id"] for o in state["session"]["question"]["options"]], ["start_game", "close_game", "keep"])
+        self.assertEqual(admin.post("/api/admin/answer", json={"choice": "keep"}).status_code, 200)
+        wait_for(lambda: (st := admin.get("/api/admin/state").json())["session"]["login_code"] and st, "the sign-in code")
+        admin.post("/api/admin/command", json={"type": "abort_session"})
+        agent_thread.join(30)
+        self.assertFalse(agent_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(rig.gamepad.taps, [Button.A, Button.GUIDE, Button.A, Button.DOWN, Button.A])  # joystick A, then the agent's own flow
 
     def test_full_session_driven_from_the_web_api(self):
         import httpx
